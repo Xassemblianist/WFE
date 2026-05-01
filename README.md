@@ -1,84 +1,84 @@
-<h1 align="center">Atmosfer</h1>
+<h1 align="center">CPPWRF</h1>
 
 <p align="center">
-  <i>Modern numerical weather prediction, written from scratch in C++20 + CUDA.</i>
+  <i>Modern sayısal hava tahmini — sıfırdan, C++20 ve CUDA ile.</i>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-design%20phase-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/language-C%2B%2B20%20%2B%20CUDA-76B900?style=flat-square" />
-  <img src="https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square" />
+  <img src="https://img.shields.io/badge/durum-tasar%C4%B1m%20a%C5%9Fmas%C4%B1-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/dil-C%2B%2B20%20%2B%20CUDA-76B900?style=flat-square" />
+  <img src="https://img.shields.io/badge/lisans-MIT-lightgrey?style=flat-square" />
 </p>
 
 ---
 
-> **Status:** This repository is in the design phase &mdash; no production code yet. The README and roadmap document the vision; implementation begins with Phase 1 (1D shallow water on GPU). Progress is tracked openly.
+> **Durum:** Bu repo şu an tasarım aşamasındadır — üretim kodu yok. README ve yol haritası viziyon dokümanıdır; uygulama Faz 1 (tek GPU üzerinde 1D shallow water denklemleri) ile başlar. İlerleme açıkça takip edilir.
 
-## What this is
+## Bu nedir
 
-Atmosfer is a clean-room implementation of a research-grade non-hydrostatic atmospheric model, designed for modern GPUs from the ground up.
+CPPWRF, modern GPU'lar için sıfırdan tasarlanmış, araştırma-sınıfı bir non-hidrostatik atmosfer modelidir.
 
-The dominant weather model in research today, **WRF** (Weather Research and Forecasting), is roughly 1.5 million lines of Fortran 90 written starting in the late 1990s. Its data layouts, MPI communication patterns, and memory model predate CUDA. Porting WRF to GPUs has been an active research effort for over a decade and remains incomplete.
+Bugün araştırmada baskın olan hava modeli **WRF** (Weather Research and Forecasting), 1990'ların sonunda Fortran 90 ile yazılmış yaklaşık 1.5 milyon satırlık bir kod tabanıdır. Veri yapıları, MPI iletişim desenleri ve bellek modeli CUDA öncesinden gelir. WRF'i GPU'ya taşıma 10 yılı aşkın süredir aktif bir araştırma çabası ve hâlâ tamamlanmadı.
 
-**Atmosfer takes the opposite approach:** start with the equations, target the hardware (Hopper / Blackwell-class GPUs), and let the code shape itself accordingly.
+**CPPWRF tersine bir yaklaşım benimser:** denklemlerden başla, donanımı (Hopper / Blackwell sınıfı GPU'lar) hedefle, kod kendi kendine şekillensin.
 
-## Three pillars
+## Üç sütun
 
-### 1. Dynamical core
-- Fully compressible non-hydrostatic equations
-- Terrain-following (sigma-pressure hybrid) vertical coordinate
-- Finite-volume spatial discretization, third-order WENO advection
-- Split-explicit acoustic time stepping (Klemp, Skamarock &amp; Dudhia, 2007)
-- Single-precision compute path with mixed-precision option for tensor cores
+### 1. Dinamik çekirdek
+- Tam sıkıştırılabilir non-hidrostatik denklemler
+- Terrain-following (sigma-basınç hibrit) dikey koordinat
+- Sonlu hacim uzaysal ayrıklaştırma, üçüncü dereceden WENO advection
+- Split-explicit akustik zaman adımı (Klemp, Skamarock ve Dudhia, 2007)
+- Tek hassasiyetli compute path; tensor core'lar için karışık hassasiyet seçeneği
 
-### 2. Pluggable physics
-Each parameterization is an independent CUDA kernel with a stable interface, so any one can be swapped without touching the dynamics:
-- **Microphysics:** Thompson 8-class
-- **Planetary boundary layer:** YSU (Hong, 2006)
-- **Land surface:** Noah-MP
-- **Radiation:** RRTMG (longwave + shortwave)
-- **Cumulus:** off by default at convection-permitting resolution
+### 2. Eklenebilir fizik
+Her parametrizasyon, kararlı bir arayüze sahip bağımsız bir CUDA kernel'idir; herhangi biri dinamiklere dokunmadan değiştirilebilir:
+- **Mikrofizik:** Thompson 8-sınıf
+- **Sınır tabakası (PBL):** YSU (Hong, 2006)
+- **Yüzey:** Noah-MP
+- **Radyasyon:** RRTMG (uzun ve kısa dalga)
+- **Konvektif şema:** convection-permitting çözünürlükte varsayılan kapalı
 
-### 3. Operational I/O
-- Reads GFS or ICON-EU GRIB2 initial &amp; boundary conditions
-- Writes Zarr-format output for streaming to a web viewer
-- Drives a public forecast page hosted at `xassemblianist.github.io/atmosfer`
+### 3. Operasyonel G/Ç
+- GFS veya ICON-EU GRIB2 başlangıç ve sınır koşullarını okur
+- Web viewer'a streaming için Zarr çıktısı yazar
+- `xassemblianist.github.io/cppwrf` adresinde canlı tahmin sayfası besler
 
-## Demo target
+## Demo hedefi
 
-An operational forecast pipeline for the Eastern Mediterranean / Antalya basin:
-- **Domain:** ~500&times;500 km, centered on Antalya
-- **Resolution:** 1 km horizontal, 60 vertical levels
-- **Range:** 48 hours
-- **Cadence:** 00 UTC and 12 UTC, twice daily
-- **Output:** browser-renderable forecast page, auto-published to GitHub Pages
+Doğu Akdeniz / Antalya havzası için operasyonel tahmin pipeline'ı:
+- **Bölge:** ~500&times;500 km, Antalya merkezli
+- **Çözünürlük:** 1 km yatay, 60 dikey seviye
+- **Aralık:** 48 saat
+- **Sıklık:** 00 UTC ve 12 UTC, günde iki kez
+- **Çıktı:** tarayıcıda render edilebilir tahmin sayfası, otomatik GitHub Pages'e yayınlanır
 
-## Roadmap
+## Yol haritası
 
-| Phase | Scope | Primary deliverable |
+| Faz | Kapsam | Birincil çıktı |
 |---|---|---|
-| **1** | 1D shallow-water equations on a single GPU, idealized initial conditions | Validation against analytical dam-break solution |
-| **2** | 2D non-hydrostatic compressible atmosphere, idealized cases | Density-current and 2D mountain-wave reproduction (Straka 1993, Schär 2002) |
-| **3** | 3D dynamical core, real terrain, basic physics (microphysics + PBL) | Reproduce a documented historical convective event |
-| **4** | Operational pipeline, GFS / ICON-EU ingest, Zarr output, web viewer | Live Antalya forecast running twice daily |
-| **5** | Multi-GPU domain decomposition, ensemble forecasting | 16-member ensemble at convection-permitting scale |
+| **1** | Tek GPU üzerinde 1D shallow-water, idealize başlangıç koşulları | Analitik dam-break çözümü ile doğrulama |
+| **2** | 2D non-hidrostatik sıkıştırılabilir atmosfer, idealize vakalar | Density-current ve 2D dağ dalgası reprodüksiyonu (Straka 1993, Schär 2002) |
+| **3** | 3D dinamik çekirdek, gerçek topografya, temel fizik (mikrofizik + PBL) | Belgelenmiş tarihsel konvektif olayın yeniden üretilmesi |
+| **4** | Operasyonel pipeline, GFS / ICON-EU ingest, Zarr çıktı, web viewer | Günde iki kez çalışan canlı Antalya tahmini |
+| **5** | Çoklu GPU domain decomposition, ensemble forecasting | Convection-permitting ölçekte 16 üyeli ensemble |
 
-Each phase produces something testable and publishable on its own. No phase is hidden behind another.
+Her faz tek başına test edilebilir ve yayımlanabilir.
 
-## Why this is worth doing
+## Neden değerli
 
-- **There is a real gap.** Modern fully-GPU NWP is an open problem. MPAS, FV3, and IFS are all Fortran-first; their GPU paths are partial and bolted on.
-- **It composes with [XasmAI](https://github.com/Xassemblianist/XasmAI).** Phase 5+ opens the door to ML-augmented forecasting (e.g., learned subgrid closures, FourCastNet-style emulators) trained with my own engine.
-- **It has a real-world target.** A working Antalya forecast page is a tangible outcome &mdash; not a paper, not a benchmark, a thing the public can see.
+- **Gerçek bir boşluk var.** Modern tam-GPU NWP açık bir problem. MPAS, FV3 ve IFS Fortran-first; GPU yolları kısmi ve sonradan eklenmiş.
+- **[XasmAI](https://github.com/Xassemblianist/XasmAI) ile birleşir.** Faz 5+ , kendi motorumla eğittiğim ML-augmented forecasting (öğrenilmiş subgrid closure'lar, FourCastNet-tarzı emülatörler) için kapı açar.
+- **Gerçek dünya hedefi var.** Çalışan bir Antalya tahmin sayfası elle tutulur bir çıktı — paper değil, benchmark değil, halkın görebileceği bir şey.
 
-## References
+## Referanslar
 
-The core algorithmic references this work draws on:
+Bu çalışmanın dayandığı temel algoritmik referanslar:
 
 - Skamarock, W.C. &amp; Klemp, J.B. (2008). *A time-split nonhydrostatic atmospheric model for weather research and forecasting applications.* J. Comput. Phys.
 - Wicker, L.J. &amp; Skamarock, W.C. (2002). *Time-splitting methods for elastic models using forward time schemes.* Mon. Wea. Rev.
 - Klemp, J.B., Skamarock, W.C. &amp; Dudhia, J. (2007). *Conservative split-explicit time integration methods for the compressible nonhydrostatic equations.* Mon. Wea. Rev.
 
-## License
+## Lisans
 
-MIT &mdash; see [LICENSE](LICENSE).
+MIT &mdash; bkz. [LICENSE](LICENSE).
