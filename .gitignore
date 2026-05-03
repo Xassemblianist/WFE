@@ -21,7 +21,8 @@ out/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
+
+results/*.csv
 
 *.nc
 *.grib2
