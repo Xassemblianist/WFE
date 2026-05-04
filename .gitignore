@@ -23,6 +23,12 @@ CMakeFiles/
 cmake_install.cmake
 
 results/*.csv
+results_2d/
+
+test_flux
+test_flux2
+test_ic
+test_math
 
 *.nc
 *.grib2
