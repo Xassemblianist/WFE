@@ -21,7 +21,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CMAKE_CXX_FLAGS_RELEASE  "-O3 -march=native -DNDEBUG")
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE  "/O2 /DNDEBUG")
+else()
+    set(CMAKE_CXX_FLAGS_RELEASE  "-O3 -march=native -DNDEBUG")
+endif()
 set(CMAKE_CUDA_FLAGS_RELEASE "--use_fast_math -O3 -DNDEBUG")
 
 # ─── Sources ──────────────────────────────────────────────────────────────────
