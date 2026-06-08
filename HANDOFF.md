@@ -1,9 +1,9 @@
-# CPPWRF Project Handoff & Phase 2 Blueprint
+# WFE Project Handoff & Phase 2 Blueprint
 
-This document contains the complete context, current technical state, and the final required fixes for **CPPWRF (Phase 2)**. Please read this entirely before writing any code.
+This document contains the complete context, current technical state, and the final required fixes for **WFE (Phase 2)**. Please read this entirely before writing any code.
 
-## 1. Project Overarching Goals (CPPWRF)
-**CPPWRF** is being developed as a high-performance, GPU-accelerated Numerical Weather Prediction (NWP) engine written in C++ and CUDA. The ultimate objective is to surpass the legacy CPU-based WRF (Weather Research and Forecasting) model by utilizing modern GPU hardware architectures (e.g., RTX 5070 Ti) from the ground up, moving away from legacy Fortran code.
+## 1. Project Overarching Goals (WFE)
+**WFE** is being developed as a high-performance, GPU-accelerated Numerical Weather Prediction (NWP) engine written in C++ and CUDA. The ultimate objective is to surpass the legacy CPU-based WRF (Weather Research and Forecasting) model by utilizing modern GPU hardware architectures (e.g., RTX 5070 Ti) from the ground up, moving away from legacy Fortran code.
 
 **Project Roadmap:**
 - **Phase 1 (Completed):** 1D Shallow Water Equations (SWE) on GPU (validated successfully).
@@ -75,7 +75,7 @@ To fix this, we must BYPASS the WENO reconstruction at the boundaries $f=0$ and 
 
 ## 5. Next Steps for the Session
 1. **Fix & Verify:** Apply the hydrostatic boundary extrapolation fix described above.
-2. **Equilibrium Test:** Compile and run `./build/cppwrf2d --tend 3 --cfl 0.4` with `dtheta_cold = 0.0` (in `cases/density_current.hpp`). The velocities MUST remain exactly $0.00$ at all times, confirming exact hydrostatic equilibrium.
+2. **Equilibrium Test:** Compile and run `./build/wfe2d --tend 3 --cfl 0.4` with `dtheta_cold = 0.0` (in `cases/density_current.hpp`). The velocities MUST remain exactly $0.00$ at all times, confirming exact hydrostatic equilibrium.
 3. **Density Current Test:** Change `dtheta_cold` back to `-15.0` and run the simulation. The solver should now be completely stable. Add a simple Python script to plot the generated CSV snapshots to verify the physical structure of the density current.
 4. **Mountain Wave:** Once validated, move on to the Schär et al. (2002) Mountain Wave test case.
 5. **Damping/Sponge Layer:** Add Rayleigh damping near the top boundary to absorb upward-propagating gravity waves.

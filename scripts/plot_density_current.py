@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CPPWRF Phase 2 — Density Current Visualizer
+WFE Phase 2 — Density Current Visualizer
 Plots θ' and w snapshots from CSV output (numpy only, no pandas).
 Usage: python3 scripts/plot_density_current.py [results_dir] [snap_index|all]
 """

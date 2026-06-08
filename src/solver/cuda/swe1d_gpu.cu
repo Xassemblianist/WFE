@@ -1,5 +1,5 @@
 /*
- * CPPWRF — Phase 1
+ * WFE — Phase 1
  * GPU solver: 1D SWE, WENO3 + HLLC + SSP-RK3
  * Targets: sm_75 (RTX 2060) ... sm_120 (RTX 5070 Ti / Blackwell)
  *
@@ -187,7 +187,7 @@ __global__ void kernel_wave_speed(const State* __restrict__ q,
 SWE1D_GPU::SWE1D_GPU(int nx, Real dx, Real cfl)
     : nx_(nx), dx_(dx), cfl_(cfl), t_(0.0), step_n_(0)
 {
-    const int N = nx + 2 * cppwrf::HALO;
+    const int N = nx + 2 * wfe::HALO;
 
     CUDA_CHECK(cudaMalloc(&d_q_,   N * sizeof(State)));
     CUDA_CHECK(cudaMalloc(&d_q1_,  N * sizeof(State)));
@@ -217,12 +217,12 @@ SWE1D_GPU::~SWE1D_GPU() {
 }
 
 void SWE1D_GPU::set_state(const std::vector<State>& ic) {
-    const int N = nx_ + 2 * cppwrf::HALO;
+    const int N = nx_ + 2 * wfe::HALO;
     std::vector<State> buf(N);
-    for (int i = 0; i < nx_; ++i) buf[cppwrf::HALO + i] = ic[i];
-    for (int k = 0; k < cppwrf::HALO; ++k) {
-        buf[cppwrf::HALO - 1 - k]   = ic[0];
-        buf[cppwrf::HALO + nx_ + k] = ic[nx_ - 1];
+    for (int i = 0; i < nx_; ++i) buf[wfe::HALO + i] = ic[i];
+    for (int k = 0; k < wfe::HALO; ++k) {
+        buf[wfe::HALO - 1 - k]   = ic[0];
+        buf[wfe::HALO + nx_ + k] = ic[nx_ - 1];
     }
     CUDA_CHECK(cudaMemcpy(d_q_, buf.data(), N * sizeof(State), cudaMemcpyHostToDevice));
     t_ = 0.0; step_n_ = 0; smax_pending_ = false;
@@ -231,7 +231,7 @@ void SWE1D_GPU::set_state(const std::vector<State>& ic) {
     CUDA_CHECK(cudaMemset(d_smax_, 0, sizeof(Real)));
     int threads = 256, blocks = (nx_ + threads - 1) / threads;
     kernel_wave_speed<<<blocks, threads, threads*sizeof(Real)>>>(
-        d_q_, d_smax_, cppwrf::HALO, nx_);
+        d_q_, d_smax_, wfe::HALO, nx_);
     CUDA_CHECK(cudaDeviceSynchronize());
     Real smax;
     CUDA_CHECK(cudaMemcpy(&smax, d_smax_, sizeof(Real), cudaMemcpyDeviceToHost));
@@ -242,7 +242,7 @@ void SWE1D_GPU::async_compute_dt() {
     CUDA_CHECK(cudaMemset(d_smax_, 0, sizeof(Real)));
     int threads = 256, blocks = (nx_ + threads - 1) / threads;
     kernel_wave_speed<<<blocks, threads, threads*sizeof(Real)>>>(
-        d_q_, d_smax_, cppwrf::HALO, nx_);
+        d_q_, d_smax_, wfe::HALO, nx_);
     // Async copy so we don't block; record event to know when it's done
     CUDA_CHECK(cudaMemcpyAsync(h_smax_, d_smax_, sizeof(Real),
                                cudaMemcpyDeviceToHost));
@@ -261,14 +261,14 @@ void SWE1D_GPU::collect_dt() {
 
 void SWE1D_GPU::launch_fill_halos(State* d_q) {
     constexpr int threads = 32;
-    kernel_fill_halos<<<1, threads>>>(d_q, cppwrf::HALO, nx_);
+    kernel_fill_halos<<<1, threads>>>(d_q, wfe::HALO, nx_);
 }
 
 void SWE1D_GPU::launch_reconstruct(const State* d_q) {
     const int nfaces = nx_ + 1;
     const int threads = 256;
     const int blocks  = (nfaces + threads - 1) / threads;
-    kernel_weno3<<<blocks, threads>>>(d_q, d_qL_, d_qR_, cppwrf::HALO, nx_);
+    kernel_weno3<<<blocks, threads>>>(d_q, d_qL_, d_qR_, wfe::HALO, nx_);
 }
 
 void SWE1D_GPU::launch_fluxes() {
@@ -287,7 +287,7 @@ void SWE1D_GPU::launch_update(State* d_dst, const State* d_q_old,
     kernel_rk_update<<<blocks, threads>>>(
         d_dst, d_q_old, d_q_stage, d_F_,
         dt, 1.0 / dx_, coeff_old, coeff_stage,
-        cppwrf::HALO, nx_);
+        wfe::HALO, nx_);
 }
 
 void SWE1D_GPU::step() {
@@ -328,9 +328,9 @@ void SWE1D_GPU::step() {
 std::vector<State> SWE1D_GPU::get_state() const {
     // Flush any pending work before reading back
     CUDA_CHECK(cudaDeviceSynchronize());
-    const int N = nx_ + 2 * cppwrf::HALO;
+    const int N = nx_ + 2 * wfe::HALO;
     std::vector<State> buf(N);
     CUDA_CHECK(cudaMemcpy(buf.data(), d_q_, N * sizeof(State), cudaMemcpyDeviceToHost));
-    return std::vector<State>(buf.begin() + cppwrf::HALO,
-                              buf.begin() + cppwrf::HALO + nx_);
+    return std::vector<State>(buf.begin() + wfe::HALO,
+                              buf.begin() + wfe::HALO + nx_);
 }

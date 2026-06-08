@@ -1,5 +1,5 @@
 /*
- * CPPWRF — Phase 1
+ * WFE — Phase 1
  * CPU reference solver: 1D shallow water equations
  * Scheme: WENO3 reconstruction · HLLC flux · SSP-RK3 time integration
  */
@@ -9,7 +9,7 @@
 #include <cmath>
 #include <stdexcept>
 
-using namespace cppwrf;
+using namespace wfe;
 
 // ─── Constructor ──────────────────────────────────────────────────────────────
 

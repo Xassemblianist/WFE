@@ -1,8 +1,8 @@
 /*
- * CPPWRF — Phase 1 entry point
+ * WFE — Phase 1 entry point
  * Runs the 1D dam-break test case on CPU and GPU, writes CSV snapshots.
  *
- * Usage: ./cppwrf [--cpu | --gpu] [--nx N] [--tend T]
+ * Usage: ./wfe [--cpu | --gpu] [--nx N] [--tend T]
  */
 
 #include "types.hpp"
@@ -15,17 +15,30 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <climits>
+#include <filesystem>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <unistd.h>
-#include <libgen.h>
+#include <limits.h>
+#endif
 
 // Resolve the output directory relative to the binary, not the CWD.
 static std::string binary_dir() {
+#ifdef _WIN32
+    char buf[MAX_PATH];
+    DWORD length = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (length == 0) return "./";
+    return std::filesystem::path(buf).parent_path().string() + "/";
+#else
     char buf[PATH_MAX];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n < 0) return "./";
     buf[n] = '\0';
-    return std::string(dirname(buf)) + "/";
+    return std::filesystem::path(buf).parent_path().string() + "/";
+#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -47,7 +60,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::printf("CPPWRF Phase 1 — 1D Dam-Break\n");
+    std::printf("WFE Phase 1 — 1D Dam-Break\n");
     std::printf("  device : %s\n", use_gpu ? "GPU (CUDA)" : "CPU");
     std::printf("  nx     : %d\n", p.nx);
     std::printf("  dx     : %.6f m\n", p.dx);
@@ -69,8 +82,8 @@ int main(int argc, char* argv[]) {
         while (solver.time() < p.tend - 1.0e-12) {
             if (solver.time() >= next_out - 1.0e-12) {
                 const auto& q = solver.state();
-                std::vector<State> interior(q.begin() + cppwrf::HALO,
-                                            q.begin() + cppwrf::HALO + p.nx);
+                std::vector<State> interior(q.begin() + wfe::HALO,
+                                            q.begin() + wfe::HALO + p.nx);
                 writer.write_snapshot(interior, p.nx, p.dx, solver.time());
                 std::printf("  t = %.4f\n", (double)solver.time());
                 next_out += p.output_interval;
@@ -79,8 +92,8 @@ int main(int argc, char* argv[]) {
         }
         // Final snapshot
         const auto& q = solver.state();
-        std::vector<State> interior(q.begin() + cppwrf::HALO,
-                                    q.begin() + cppwrf::HALO + p.nx);
+        std::vector<State> interior(q.begin() + wfe::HALO,
+                                    q.begin() + wfe::HALO + p.nx);
         writer.write_snapshot(interior, p.nx, p.dx, solver.time());
         std::printf("  t = %.4f (final)\n", (double)solver.time());
 

@@ -1,8 +1,8 @@
 /*
- * CPPWRF — Phase 2 entry point
+ * WFE — Phase 2 entry point
  * Runs the 2D density current test case on GPU, writes CSV snapshots.
  *
- * Usage: ./cppwrf2d
+ * Usage: ./wfe2d
  */
 
 #include "types2d.hpp"
@@ -10,22 +10,36 @@
 #include "../cases/density_current.hpp"
 #include "io/output.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+#include <filesystem>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <unistd.h>
-#include <libgen.h>
-#include <climits>
+#include <limits.h>
+#endif
 
 // Resolve the output directory relative to the binary, not the CWD.
 static std::string binary_dir() {
+#ifdef _WIN32
+    char buf[MAX_PATH];
+    DWORD length = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (length == 0) return "./";
+    return std::filesystem::path(buf).parent_path().string() + "/";
+#else
     char buf[PATH_MAX];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n < 0) return "./";
     buf[n] = '\0';
-    return std::string(dirname(buf)) + "/";
+    return std::filesystem::path(buf).parent_path().string() + "/";
+#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -51,7 +65,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::printf("CPPWRF Phase 2 — 2D Density Current\n");
+    std::printf("WFE Phase 2 — 2D Density Current\n");
     std::printf("  device : GPU (CUDA)\n");
     std::printf("  nx x nz: %d x %d\n", p.nx, p.nz);
     std::printf("  dx, dz : %.2f m, %.2f m\n", p.dx, p.dz);
@@ -65,6 +79,8 @@ int main(int argc, char* argv[]) {
     std::vector<Real> rho_b, pi_b;
     cases::make_base_state(p, rho_b, pi_b, atm::HALO2);
 
+    std::array<Real,4> diag0 = {0,0,0,0};  // reference values at t=0
+
     auto write_snapshot = [&](const Euler2D_GPU& solver, int step, Real t) {
         auto h_rho = solver.get_rho();
         auto h_rhou = solver.get_rhou();
@@ -75,8 +91,7 @@ int main(int argc, char* argv[]) {
         std::sprintf(filename, "%s/density_current_%04d.csv", p.output_dir.c_str(), step);
         FILE* f = std::fopen(filename, "w");
         if (!f) {
-            std::string cmd = "mkdir -p " + p.output_dir;
-            system(cmd.c_str());
+            std::filesystem::create_directories(p.output_dir);
             f = std::fopen(filename, "w");
             if (!f) return;
         }
@@ -100,15 +115,32 @@ int main(int argc, char* argv[]) {
     Euler2D_GPU solver(p.nx, p.nz, p.dx, p.dz, p.cfl);
     solver.set_base_state(rho_b, pi_b);
     solver.set_state(rho, rhou, rhow, rhoTh);
+    
+    // Smagorinsky turbulence closure (Cs=0.18, Prt=1/3 — matches WRF 2D idealized defaults)
+    solver.set_smagorinsky(0.18, 1.0/3.0);
+
+    // Activate sponge layer in the top 1.5km
+    solver.set_sponge_layer(p.nz * p.dz - 1500.0, p.nz * p.dz, 10.0, 0.0);
 
     auto t0 = std::chrono::high_resolution_clock::now();
+
+    // Initial conservation diagnostics
+    diag0 = solver.get_diagnostics();
+    std::printf("  Conservation (mass [kg/m], KE [J/m], PE [J/m], ρθ [kg·K/m]):\n");
+    std::printf("    t=0: mass=%.6e  KE=%.6e  PE=%.6e\n",
+                diag0[0], diag0[1], diag0[2]);
 
     Real next_out = 0.0;
     int out_snap  = 0;
     int step_n    = 0;
     while (solver.time() < p.tend - 1.0e-12) {
         if (solver.time() >= next_out - 1.0e-12) {
-            std::printf("  snapshot %d, t = %.4f\n", out_snap, (double)solver.time());
+            auto diag = solver.get_diagnostics();
+            std::printf("  snapshot %d, t = %.1f s  |  Δmass=%.3e  ΔKE=%.3e  ΔPE=%.3e\n",
+                        out_snap, (double)solver.time(),
+                        (diag[0]-diag0[0])/diag0[0],
+                        (diag[1]-diag0[1]),
+                        (diag[2]-diag0[2]));
             write_snapshot(solver, out_snap++, solver.time());
             next_out += p.output_interval;
         }

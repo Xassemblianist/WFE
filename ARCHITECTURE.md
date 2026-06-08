@@ -1,13 +1,13 @@
-# CPPWRF — Complete Architecture Reference for AI Agents
+# WFE — Complete Architecture Reference for AI Agents
 
 > **Last Updated:** 2026-05-04  
-> **Purpose:** This document gives any AI model (Claude, Gemini, GPT, etc.) the full context needed to understand, modify, and extend the CPPWRF codebase. Read this BEFORE writing any code.
+> **Purpose:** This document gives any AI model (Claude, Gemini, GPT, etc.) the full context needed to understand, modify, and extend the WFE codebase. Read this BEFORE writing any code.
 
 ---
 
 ## 1. Project Vision & Identity
 
-**CPPWRF** is a ground-up, GPU-first Numerical Weather Prediction (NWP) engine written in **C++20 + CUDA**. It aims to replace the legacy Fortran-based WRF model (~1.5M lines) with a modern, GPU-native alternative.
+**WFE** is a ground-up, GPU-first Numerical Weather Prediction (NWP) engine written in **C++20 + CUDA**. It aims to replace the legacy Fortran-based WRF model (~1.5M lines) with a modern, GPU-native alternative.
 
 - **Owner:** Xassemblianist (GitHub)
 - **License:** MIT
@@ -48,9 +48,9 @@
 ## 3. Source Tree & File Map
 
 ```
-CPPWRF/                          (root)
+WFE/                          (root)
 ├── CMakeLists.txt               (53 lines)  — cmake config, C++20 + CUDA 17, sm_75/86/89
-├── Makefile                     (58 lines)  — standalone make, builds `cppwrf` (1D) + `cppwrf2d` (2D)
+├── Makefile                     (58 lines)  — standalone make, builds `wfe` (1D) + `wfe2d` (2D)
 ├── README.md                                — project vision (Turkish)
 ├── HANDOFF.md                               — Phase 2 context for AI agent handoff
 ├── TECHNICAL_ANALYSIS_FOR_GEMINI_PRO.md     — detailed numerical analysis
@@ -96,7 +96,7 @@ Two build paths exist, both produce the same binaries:
 
 ### Makefile (Primary)
 ```bash
-make all          # builds build/cppwrf (1D) + build/cppwrf2d (2D)
+make all          # builds build/wfe (1D) + build/wfe2d (2D)
 make clean        # removes build/
 ```
 
@@ -106,7 +106,7 @@ mkdir build && cd build && cmake .. && make
 ```
 
 > [!WARNING]
-> The CMakeLists.txt only builds the 1D `cppwrf` binary. The Makefile builds both 1D and 2D. **Use the Makefile** for Phase 2 work.
+> The CMakeLists.txt only builds the 1D `wfe` binary. The Makefile builds both 1D and 2D. **Use the Makefile** for Phase 2 work.
 
 ### Compiler Flags
 - **C++:** `-std=c++20 -O3 -march=native`
@@ -116,7 +116,7 @@ mkdir build && cd build && cmake .. && make
 
 ### Run
 ```bash
-./build/cppwrf2d --nx 256 --nz 64 --tend 900 --cfl 0.4
+./build/wfe2d --nx 256 --nz 64 --tend 900 --cfl 0.4
 ```
 
 ---
@@ -395,10 +395,10 @@ rL = rL_perturbation + rho_b[iz_];
 ```markdown
 1. Read THIS document first
 2. The active file is: src/solver/cuda/euler2d_gpu.cu (782 lines)
-3. Build: `make -C /home/ostriquetrum/CPPWRF clean all`
-4. Run:   `./build/cppwrf2d --tend 3 --cfl 0.4`
+3. Build: `make -C /home/ostriquetrum/WFE clean all`
+4. Run:   `./build/wfe2d --tend 3 --cfl 0.4`
 5. Check: `max_u` and `max_w` in stdout — they should NOT grow exponentially
-6. If stable, run full: `./build/cppwrf2d --tend 900 --cfl 0.4`
+6. If stable, run full: `./build/wfe2d --tend 900 --cfl 0.4`
 7. Plot:  `cd scripts && python3 plot_density_current.py`
 ```
 

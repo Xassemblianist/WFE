@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(CPPWRF LANGUAGES CXX CUDA)
+project(WFE LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,21 +32,88 @@ set(SOURCES
     src/solver/cuda/swe1d_gpu.cu
 )
 
-add_executable(cppwrf ${SOURCES})
+add_executable(wfe ${SOURCES})
 
-target_include_directories(cppwrf PRIVATE
+target_include_directories(wfe PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src
 )
 
 # CUDA separable compilation for device-side function calls across .cu files
-set_target_properties(cppwrf PROPERTIES
+set_target_properties(wfe PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
 
-target_compile_options(cppwrf PRIVATE
+target_compile_options(wfe PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:
         --expt-relaxed-constexpr
         --expt-extended-lambda
     >
 )
+
+# ─── 2D Density Current ───────────────────────────────────────────────────────
+add_executable(wfe2d
+    src/main2d.cpp
+    src/solver/cuda/euler2d_gpu.cu
+)
+
+target_include_directories(wfe2d PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+set_target_properties(wfe2d PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
+
+target_compile_options(wfe2d PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:
+        --expt-relaxed-constexpr
+        --expt-extended-lambda
+    >
+)
+
+# ─── 2D Mountain Wave ─────────────────────────────────────────────────────────
+add_executable(wfe_mw
+    src/main_mw.cpp
+    src/solver/cuda/euler2d_gpu.cu
+)
+
+target_include_directories(wfe_mw PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+set_target_properties(wfe_mw PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
+
+target_compile_options(wfe_mw PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:
+        --expt-relaxed-constexpr
+        --expt-extended-lambda
+    >
+)
+
+# ─── 3D Warm Bubble ───────────────────────────────────────────────────────────
+add_executable(wfe3d
+    src/main3d.cpp
+    src/solver/cuda/euler3d_gpu.cu
+)
+
+target_include_directories(wfe3d PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+set_target_properties(wfe3d PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
+
+target_compile_options(wfe3d PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:
+        --expt-relaxed-constexpr
+        --expt-extended-lambda
+    >
+)
+

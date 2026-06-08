@@ -1,4 +1,4 @@
-<h1 align="center">CPPWRF</h1>
+<h1 align="center">WFE — Weather Forecast Engine</h1>
 
 <p align="center">
   <i>Modern sayısal hava tahmini — sıfırdan, C++20 ve CUDA ile.</i>
@@ -16,11 +16,11 @@
 
 ## Bu nedir
 
-CPPWRF, modern GPU'lar için sıfırdan tasarlanmış, araştırma-sınıfı bir non-hidrostatik atmosfer modelidir.
+WFE, modern GPU'lar için sıfırdan tasarlanmış, araştırma-sınıfı bir non-hidrostatik atmosfer modelidir.
 
 Bugün araştırmada baskın olan hava modeli **WRF** (Weather Research and Forecasting), 1990'ların sonunda Fortran 90 ile yazılmış yaklaşık 1.5 milyon satırlık bir kod tabanıdır. Veri yapıları, MPI iletişim desenleri ve bellek modeli CUDA öncesinden gelir. WRF'i GPU'ya taşıma 10 yılı aşkın süredir aktif bir araştırma çabası ve hâlâ tamamlanmadı.
 
-**CPPWRF tersine bir yaklaşım benimser:** denklemlerden başla, donanımı (Hopper / Blackwell sınıfı GPU'lar) hedefle, kod kendi kendine şekillensin.
+**WFE tersine bir yaklaşım benimser:** denklemlerden başla, donanımı (Hopper / Blackwell sınıfı GPU'lar) hedefle, kod kendi kendine şekillensin.
 
 ## Üç sütun
 
@@ -42,7 +42,7 @@ Her parametrizasyon, kararlı bir arayüze sahip bağımsız bir CUDA kernel'idi
 ### 3. Operasyonel G/Ç
 - GFS veya ICON-EU GRIB2 başlangıç ve sınır koşullarını okur
 - Web viewer'a streaming için Zarr çıktısı yazar
-- `xassemblianist.github.io/cppwrf` adresinde canlı tahmin sayfası besler
+- `xassemblianist.github.io/wfe` adresinde canlı tahmin sayfası besler
 
 ## Demo hedefi
 

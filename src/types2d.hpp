@@ -70,7 +70,7 @@ struct State2D {
 // ─── Base-state profiles (1D in z, device-accessible) ────────────────────────
 struct BaseState {
     Real* rho_b   = nullptr;   // [nz + 2*halo]
-    Real* theta_b = nullptr;
+    Real* rhoTh_b = nullptr;
     Real* pi_b    = nullptr;
     Real* p_b     = nullptr;
 };

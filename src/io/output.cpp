@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <cmath>
 #include <stdexcept>
-#include <sys/stat.h>
+#include <filesystem>
 
 namespace io {
 
@@ -10,8 +10,8 @@ CSVWriter::CSVWriter(const std::string& dir) : dir_(dir) {
     // Ensure trailing slash
     if (!dir_.empty() && dir_.back() != '/')
         dir_ += '/';
-    // Create directory if not exists (best-effort, POSIX)
-    mkdir(dir_.c_str(), 0755);
+    // Create directory if not exists
+    std::filesystem::create_directories(dir_);
 }
 
 void CSVWriter::write_snapshot(const std::vector<State>& q,

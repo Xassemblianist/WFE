@@ -23,7 +23,7 @@ struct DensityCurrentParams {
     Real output_interval = 60.0;       // [s]
     Real x0             = -12800.0;    // domain left [m]
     Real theta_bar      = 300.0;       // background potential temperature [K]
-    Real dtheta_cold    = -15.0;       // cold bubble θ perturbation [K]
+    Real dtheta_cold    = -15.0;     // cold bubble θ perturbation [K]
     Real xc             = 0.0;         // bubble centre x [m]
     Real zc             = 3000.0;      // bubble centre z [m]
     Real rx             = 4000.0;      // bubble half-width x [m]
