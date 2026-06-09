@@ -546,7 +546,8 @@ __global__ void k_wave_speed_3d(
         if(tid<off) sdata[tid]=max(sdata[tid],sdata[tid+off]);
         __syncthreads();
     }
-    if(tid==0) atomicMax((int*)smax_out,(int)__float_as_int((float)sdata[0]));
+    if(tid==0) atomicMax((unsigned long long*)smax_out,
+                          __double_as_longlong(sdata[0]));
 }
 
 // ─── Kernel: Smagorinsky + explicit diffusion (3D) ───────────────────────────

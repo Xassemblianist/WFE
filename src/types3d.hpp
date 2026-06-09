@@ -10,9 +10,9 @@
 using Real = double;
 
 namespace atm {
-    static constexpr Real Rd    = 287.05;
-    static constexpr Real Cp    = 1004.5;
-    static constexpr Real Cv    = 717.5;
+    static constexpr Real Rd    = 287.0;
+    static constexpr Real Cp    = 1004.0;
+    static constexpr Real Cv    = 717.0;
     static constexpr Real p0    = 100000.0;
     static constexpr Real gamma = 1.4;
     static constexpr Real g     = 9.81;
