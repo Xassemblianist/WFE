@@ -1,8 +1,8 @@
-# WFE — Complete Architecture Reference for AI Agents
+# WFE — Complete Architecture Reference for Developers
 
 > **Last Updated:** 2026-06-08  
 > **Version:** 1.0  
-> **Purpose:** This document gives any AI model (Claude, Gemini, GPT, etc.) the full context needed to understand, modify, and extend the WFE codebase. Read this BEFORE writing any code.
+> **Purpose:** This document gives the full context needed to understand, modify, and extend the WFE codebase. Read this BEFORE writing any code.
 
 ---
 
@@ -65,7 +65,7 @@ WFE/                          (root)
 ├── Makefile                                — Linux Makefile (g++ + nvcc), same 4 targets
 ├── README.md                               — Project overview (Turkish)
 ├── ARCHITECTURE.md                         — This document
-├── HANDOFF.md                              — Phase context for AI agent handoff
+├── HANDOFF.md                              — Phase context for Developer handoff
 │
 ├── src/
 │   ├── types.hpp                           — 1D types: Real=double, State{h,hu}, Flux
@@ -423,7 +423,7 @@ rL = rL_perturbation + rho_b[iz_];
 
 ---
 
-## 13. Quick Start for a New AI Agent
+## 13. Quick Start for a New Developer
 
 ```markdown
 1. Read THIS document first

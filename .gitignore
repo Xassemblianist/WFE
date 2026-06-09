@@ -42,7 +42,7 @@ data/processed/
 .DS_Store
 Thumbs.db
 
-# AI agent internal docs
+# Internal docs
 HANDOFF.md
 MULTI_AGENT_WORKFLOW.md
 TECHNICAL_ANALYSIS_FOR_GEMINI_PRO.md
