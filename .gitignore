@@ -1,0 +1,6 @@
+build/
+out/
+*.bin
+__pycache__/
+*.png
+.vs/
