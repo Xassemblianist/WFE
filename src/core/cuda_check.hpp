@@ -25,7 +25,11 @@ inline void check_kernel(const char* name) {
     const char* e = std::getenv("WFE_SYNC");
     return e && e[0] == '1';
   }();
-  if (sync) cudaDeviceSynchronize();
+  if (sync) {
+    cudaStreamCaptureStatus cap = cudaStreamCaptureStatusNone;
+    cudaStreamIsCapturing(cudaStreamPerThread, &cap);
+    if (cap == cudaStreamCaptureStatusNone) cudaDeviceSynchronize();
+  }
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     std::fprintf(stderr, "CUDA kernel error in %s: %s\n", name,

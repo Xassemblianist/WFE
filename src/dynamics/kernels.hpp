@@ -29,12 +29,22 @@ void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
                         const Field3D& mfx, const Field3D& mfy, const Field3D& mfz,
                         const Field3D& div, State& tend);
 
+// Akustik cozucunun kosu boyunca sabit katsayi alanlari (Faz 6 performans):
+// bir kez hesaplanir, her alt-adimda yeniden turetim yerine okunur.
+struct AcousticCoef {
+  Field3D rtjx, rtjy;  // rho_b thv_b J yuz ortalamalari (u/v yuzleri)
+  Field3D kt3;         // Rd pib / (cv rho_b thv_b J)
+  Field3D aw;          // rho_b^w thv_b^w (w seviyeleri)
+};
+void precompute_acoustic_coef(const GDims& g, const DevProf& p, const DevMetric& m,
+                              AcousticCoef& ac, Field3D& scratch);
+
 // Bir akustik alt-adim: u,v yatay explicit (capraz-terimli PGF); w,pi'
 // dikey implicit; theta' stratifikasyon; yuzey w'si diagnostik.
 // Nemli kaldirma acoustic dongude asama-sabit qv/qc/qr ile hesaplanir.
 void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
                       const DynParams& dp, real dtau, State& s, const State& tend,
-                      Field3D& piprev);
+                      Field3D& piprev, const AcousticCoef& ac);
 
 // Nem skalarlarinin asama guncellemesi: out.q = s0.q + dt * tend.q
 // (hizli terimleri olmadigindan akustik donguye girmezler).

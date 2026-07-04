@@ -5,6 +5,7 @@
 #include "core/grid.hpp"
 #include "core/metric.hpp"
 #include "dynamics/boundary.hpp"
+#include "dynamics/kernels.hpp"
 #include "dynamics/params.hpp"
 #include "dynamics/state.hpp"
 
@@ -18,6 +19,7 @@ class Integrator {
  public:
   void init(const GDims& g, const DevProf& prof, const DevMetric& m, const DynParams& dp);
   void step(real dt, real t);  // t: adim baslangicindaki simulasyon zamani
+  void print_profile() const;  // WFE_PROF=1 ile toplanan bolum sureleri
 
   State& state() { return s_n_; }
   const Field3D& rain() const { return rain_; }  // 2D birikmis yagis [mm]
@@ -31,8 +33,11 @@ class Integrator {
   DynParams dp_{};
   State s_n_, s_stage_, s_work_, tend_;
   Field3D div_, piprev_, mfx_, mfy_, mfz_, rain_;
+  AcousticCoef acoef_;
   BdyManager* bdy_ = nullptr;
   class SfcPBL* phys_ = nullptr;
+  bool prof_on_ = false;
+  mutable double ptimes_[8] = {};  // bolum bazli birikmis sureler [s]
 };
 
 } // namespace wfe

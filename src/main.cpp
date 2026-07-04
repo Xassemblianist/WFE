@@ -358,6 +358,7 @@ int main(int argc, char** argv) {
   double wall = std::chrono::duration<double>(t1 - t0).count();
   std::printf("bitti: %d adim, %.1f s duvar zamani, %.1f adim/s, gercek-zaman orani %.0fx\n",
               nsteps, wall, nsteps / wall, (double)t_end / wall);
+  integ.print_profile();
 
   base.release();
   return 0;

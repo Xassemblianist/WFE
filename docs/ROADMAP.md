@@ -71,8 +71,18 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [ ] Nesting (iç içe alan) — opsiyonel
 - [ ] Zamanlanmış otomatik koşular (görev zamanlayıcı)
 
-## Faz 6 — Performans
+## Faz 6 — Performans (v1 ✅ 2026-07-04)
 
-- [ ] Kernel optimizasyonu (shared memory, kernel füzyonu, occupancy)
-- [ ] Asenkron I/O, CUDA stream örtüşmesi
-- [ ] Çoklu GPU (halo exchange) — donanım el verirse
+- [x] Yerleşik profilci (`WFE_PROF=1`): bölüm bazlı GPU-senkron zamanlar
+- [x] Ölçüm bulgusu: akustik döngü %60 (kolon çözücü gecikme-sınırlı, 16k thread);
+      adveksiyon yalnız %11-14 — önyargı değil ölçüm yönlendirdi
+- [x] Akustik sabit katsayı önhesabı (rtjx/rtjy/kt3/aw alanları): wpi yükleri ~2×↓
+- [x] Vaka-bazlı acoustic_ns ayarı: dx=12km'de ns=4 yeterli (aşama CFL≤0.6) —
+      turkey 60.1→46.4 s (1.30×, 1861× gerçek-zaman), beceri birebir korundu
+- [x] CUDA Graphs denendi ve GERİ ALINDI: kazanç ölçülemedi + State::swap tampon
+      rotasyonuyla temelden uyumsuz (sabit pointer yakalar) — test süiti yakaladı.
+      Yeniden denenirse önce swap yerine sabit-rol tamponlara geçilmeli.
+- [x] Koruma doğrulaması: ns=3 (CFL 0.88) patlamasını bekçi temiz yakaladı (kod 3)
+- [ ] Kolon çözücü 3B-hazırlık/ince-çözücü ayrımı (kalan en büyük tekil kazanç ~%15-20)
+- [ ] Skalar adveksiyon füzyonu (4→1 kernel, ~%4), blok boyutu taraması, fast-math
+- [ ] Asenkron I/O örtüşmesi, çoklu GPU (halo exchange) — donanım el verirse

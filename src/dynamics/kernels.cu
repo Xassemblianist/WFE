@@ -361,6 +361,33 @@ __global__ void k_diffuse(GDims g, DevMetric m, real K, const real* f, real* ten
 
 constexpr int WFE_MAX_NZ = 320;  // kolon cozucunun yerel dizi siniri (nz+1 <= bu)
 
+// Akustik cozucunun kosu boyunca SABIT katsayi alanlari (bir kez hesaplanir):
+//   rtjc: rho_b thv_b J (merkez, ara alan)   rtjx/rtjy: yuz ortalamalari
+//   kt3:  Rd pib / (cv rho_b thv_b J)        aw: rho_b^w thv_b^w
+__global__ void k_acou_coef_c(GDims g, DevProf p, DevMetric m, real* rtjc, real* kt3,
+                              real* aw) {
+  int ir = blockIdx.x * blockDim.x + threadIdx.x;
+  int jr = blockIdx.y * blockDim.y + threadIdx.y;
+  int kr = blockIdx.z * blockDim.z + threadIdx.z;
+  if (ir >= g.NX || jr >= g.NY || kr >= g.NZ) return;
+  size_t c = ((size_t)kr * g.NY + jr) * g.NX + ir;
+  size_t c2 = (size_t)jr * g.NX + ir;
+  real J = m.jac[c2];
+  rtjc[c] = p.rhob[c] * p.thvb[c] * J;
+  kt3[c] = phys::Rd * p.pib[c] / (phys::cv * p.rhob[c] * p.thvb[c] * J);
+  aw[c] = p.rhobw[c] * p.thvbw[c];
+}
+
+__global__ void k_acou_coef_f(GDims g, const real* rtjc, real* rtjx, real* rtjy) {
+  int ir = blockIdx.x * blockDim.x + threadIdx.x;
+  int jr = blockIdx.y * blockDim.y + threadIdx.y;
+  int kr = blockIdx.z * blockDim.z + threadIdx.z;
+  if (ir >= g.NX || jr >= g.NY || kr >= g.NZ) return;
+  size_t c = ((size_t)kr * g.NY + jr) * g.NX + ir;
+  rtjx[c] = (ir > 0) ? (real)0.5 * (rtjc[c - 1] + rtjc[c]) : rtjc[c];
+  rtjy[c] = (jr > 0) ? (real)0.5 * (rtjc[c - g.NX] + rtjc[c]) : rtjc[c];
+}
+
 // u,v guncellemesi: pi* = pi' + smdiv (pi' - pi'_onceki); arazi capraz terimi
 // (dz/dx * dpi/dzeta) explicit. PGF katsayisi TAM sanal pot. sicaklik
 // (theta_b + theta')(1 + 0.61 qv): sinoptik olcekli buyuk pertubasyonlarda
@@ -415,10 +442,13 @@ __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dt
 // w-pi' dikey implicit cozucu + theta' + diagnostik yuzey w'si.
 // Kaldirma: g[ theta'/thb + 0.61(qv - qvb) - qc - qr ] (KW78 nemli form).
 __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real dtau,
-                           const real* u, const real* v, real* w, real* pip,
-                           real* piprev, real* thp, const real* tw, const real* tth,
-                           const real* tpi, const real* qv, const real* qc,
-                           const real* qr) {
+                           const real* __restrict__ u, const real* __restrict__ v,
+                           real* w, real* pip, real* piprev, real* thp,
+                           const real* __restrict__ tw, const real* __restrict__ tth,
+                           const real* __restrict__ tpi, const real* __restrict__ qv,
+                           const real* __restrict__ qc, const real* __restrict__ qr,
+                           const real* __restrict__ rtjx, const real* __restrict__ rtjy,
+                           const real* __restrict__ kt3, const real* __restrict__ aw) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   int j = blockIdx.y * blockDim.y + threadIdx.y;
   if (i >= g.nx || j >= g.ny) return;
@@ -441,7 +471,7 @@ __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real d
   for (int k = 1; k < g.nz; ++k) {
     int kk = k + g.ng;
     size_t c = gidx(g, i, j, k);
-    Av[k] = p.rhobw[c] * p.thvbw[c];
+    Av[k] = aw[c];
     real fac = (real)1 - m.zeta_w[kk] / m.zt;
     real uw = (real)0.25 * (u[gidx(g, i, j, k - 1)] + u[gidx(g, i + 1, j, k - 1)] +
                             u[gidx(g, i, j, k)] + u[gidx(g, i + 1, j, k)]);
@@ -453,16 +483,11 @@ __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real d
   for (int k = 0; k < g.nz; ++k) {
     int kk = k + g.ng;
     size_t c = gidx(g, i, j, k);
-    real Kt = phys::Rd * p.pib[c] / (phys::cv * p.rhob[c] * p.thvb[c] * J);
-    auto rtj = [&](int ii, int jj) {
-      size_t cc = gidx(g, ii, jj, k);
-      return p.rhob[cc] * p.thvb[cc] * m.jac[g2(g, ii, jj)];
-    };
-    real rc = rtj(i, j);
-    real Dh = ((real)0.5 * (rtj(i, j) + rtj(i + 1, j)) * u[gidx(g, i + 1, j, k)] -
-               (real)0.5 * (rtj(i - 1, j) + rc) * u[gidx(g, i, j, k)]) / g.dx +
-              ((real)0.5 * (rtj(i, j) + rtj(i, j + 1)) * v[gidx(g, i, j + 1, k)] -
-               (real)0.5 * (rtj(i, j - 1) + rc) * v[gidx(g, i, j, k)]) / g.dy;
+    real Kt = kt3[c];
+    real Dh = (rtjx[gidx(g, i + 1, j, k)] * u[gidx(g, i + 1, j, k)] -
+               rtjx[c] * u[gidx(g, i, j, k)]) / g.dx +
+              (rtjy[gidx(g, i, j + 1, k)] * v[gidx(g, i, j + 1, k)] -
+               rtjy[c] * v[gidx(g, i, j, k)]) / g.dy;
     real dzc = m.dzeta_c[kk];
     real wk = w[gidx(g, i, j, k)];
     real wkp = w[gidx(g, i, j, k + 1)];
@@ -774,9 +799,23 @@ void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
   check_kernel("compute_tendencies");
 }
 
+void precompute_acoustic_coef(const GDims& g, const DevProf& p, const DevMetric& m,
+                              AcousticCoef& ac, Field3D& scratch) {
+  size_t n = g.npts();
+  ac.rtjx.alloc(n);
+  ac.rtjy.alloc(n);
+  ac.kt3.alloc(n);
+  ac.aw.alloc(n);
+  dim3 b(32, 4, 2);
+  dim3 gr((g.NX + 31) / 32, (g.NY + 3) / 4, (g.NZ + 1) / 2);
+  k_acou_coef_c<<<gr, b>>>(g, p, m, scratch.d, ac.kt3.d, ac.aw.d);
+  k_acou_coef_f<<<gr, b>>>(g, scratch.d, ac.rtjx.d, ac.rtjy.d);
+  check_kernel("precompute_acoustic_coef");
+}
+
 void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
                       const DynParams& dp, real dtau, State& s, const State& tend,
-                      Field3D& piprev) {
+                      Field3D& piprev, const AcousticCoef& ac) {
   dim3 blk = tile_block();
   k_acou_uv<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, dtau, s.u.d, s.v.d,
                                                   s.pip.d, piprev.d, tend.u.d,
@@ -801,7 +840,7 @@ void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
   dim3 gcol((g.nx + 31) / 32, (g.ny + 7) / 8);
   k_acou_wpi<<<gcol, bcol>>>(g, p, m, dp, dtau, s.u.d, s.v.d, s.w.d, s.pip.d, piprev.d,
                              s.thp.d, tend.w.d, tend.thp.d, tend.pip.d, s.qv.d,
-                             s.qc.d, s.qr.d);
+                             s.qc.d, s.qr.d, ac.rtjx.d, ac.rtjy.d, ac.kt3.d, ac.aw.d);
 
   // sonraki alt-adim pi' yanal ghost'lari + capraz terim icin dusey ghost'lari okur
   bc_lateral_x(g, dp, s.pip.d, g.nx - 1);
