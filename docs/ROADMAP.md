@@ -58,11 +58,18 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [ ] Gerçek kolon radyasyonu (iki-akı/broadband) + toprak nemi (Noah sınıfı)
 - [ ] Üst seviye hatası: harita faktörleri + dikey seviye artırımı
 
-## Faz 5 — Operasyonel sistem
+## Faz 5 — Operasyonel sistem ✅ (2026-07-04)
 
-- [ ] Uçtan uca pipeline: indir → ön işle → koş → görselleştir (haritalı ürünler)
-- [ ] NetCDF çıktı, tahmin doğrulama metrikleri (gözlemlerle karşılaştırma)
+- [x] Uçtan uca pipeline (tools/run_forecast.py): en güncel GFS döngüsünü
+      NOMADS'ta otomatik bulur → prep → koşu → haritalar → NetCDF → doğrulama
+- [x] Harita ürünleri (tools/forecast_maps.py): cartopy Lambert + kıyı/sınır
+      çizgili 4 panel (yüzey T + rüzgâr, jet, bulutluluk, dönem yağışı)
+- [x] NetCDF dışa aktarım (tools/to_netcdf.py, sıkıştırmalı, xarray tabanlı)
+- [x] Doğrulama aracı (tools/verify.py): GFS hedefine karşı alan + seviye-bazlı
+      RMSE/beceri raporu — vaka bazlı sistematik iyileştirmenin altyapısı
+- [ ] Gözlemlerle (METAR/SYNOP) nokta doğrulaması
 - [ ] Nesting (iç içe alan) — opsiyonel
+- [ ] Zamanlanmış otomatik koşular (görev zamanlayıcı)
 
 ## Faz 6 — Performans
 

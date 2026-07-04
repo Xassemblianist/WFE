@@ -18,9 +18,9 @@ WRF'nin yerini alan, GPU-yerlisi, NOAA GFS verisiyle gerçek tarih-saatli operas
   bölünmesi (w_max ~45 m/s, 457× gerçek-zaman)
 
 ```
-# gercek tahmin akisi
-python tools\prep_gfs.py cases\turkey.ini --date 20260704 --cycle 00 --hours 24
-build\wfe.exe cases\turkey.ini
+# operasyonel tahmin: tek komut (en guncel GFS dongusunu kendisi bulur)
+python tools\run_forecast.py cases\turkey.ini --hours 24
+# -> out/turkey/map_*.png (kiyi cizgili urunler), wfe_out.nc, dogrulama raporu
 ```
 
 

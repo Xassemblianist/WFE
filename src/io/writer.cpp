@@ -9,7 +9,8 @@
 
 namespace wfe {
 
-void Writer::init(const GDims& g, const std::string& out_dir, real dt, bool moisture) {
+void Writer::init(const GDims& g, const std::string& out_dir, real dt, bool moisture,
+                  bool has_tsk) {
   g_ = g;
   dir_ = out_dir;
   moist_ = moisture;
@@ -34,6 +35,7 @@ void Writer::init(const GDims& g, const std::string& out_dir, real dt, bool mois
   if (moist_)
     std::fprintf(f, ", \"qv\": %d, \"qc\": %d, \"qr\": %d, \"rain\": 1", g.nz, g.nz,
                  g.nz);
+  if (has_tsk) std::fprintf(f, ", \"tsk\": 1");
   std::fprintf(f, "}\n}\n");
   std::fclose(f);
 }
@@ -52,16 +54,16 @@ void Writer::write(const State& s, int step, real t) {
   std::printf("  cikti yazildi: step %d (t = %.1f s)\n", step, (double)t);
 }
 
-void Writer::write_rain(const Field3D& rain, int step) {
-  std::vector<real> h2(rain.n);
-  rain.download(h2.data());
+void Writer::write_field2d(const Field3D& f2, const char* name, int step) {
+  std::vector<real> h2(f2.n);
+  f2.download(h2.data());
   std::vector<float> o((size_t)g_.nx * g_.ny);
   size_t idx = 0;
   for (int j = 0; j < g_.ny; ++j)
     for (int i = 0; i < g_.nx; ++i)
       o[idx++] = (float)h2[(size_t)(j + g_.ng) * g_.NX + (i + g_.ng)];
   char path[512];
-  std::snprintf(path, sizeof(path), "%s/rain_%06d.bin", dir_.c_str(), step);
+  std::snprintf(path, sizeof(path), "%s/%s_%06d.bin", dir_.c_str(), name, step);
   FILE* f = std::fopen(path, "wb");
   if (!f) {
     std::fprintf(stderr, "cikti dosyasi acilamadi: %s\n", path);

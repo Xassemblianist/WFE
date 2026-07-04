@@ -259,7 +259,8 @@ int main(int argc, char** argv) {
   }
 
   Writer writer;
-  writer.init(g, out_dir, dt, dp.moisture);
+  bool phys_on = cfg.get_str("physics", "none") == "simple" && file_mode;
+  writer.init(g, out_dir, dt, dp.moisture, phys_on);
   {  // hucre merkezi fiziksel yukseklikleri (gorselleştirme icin)
     std::vector<float> zc((size_t)g.nx * g.ny * g.nz);
     size_t o = 0;
@@ -300,7 +301,8 @@ int main(int argc, char** argv) {
     }
     if (step % out_steps == 0 || step == nsteps) {
       writer.write(integ.state(), step, t);
-      if (dp.moisture) writer.write_rain(integ.rain(), step);
+      if (dp.moisture) writer.write_field2d(integ.rain(), "rain", step);
+      if (phys_on) writer.write_field2d(phys.tsk(), "tsk", step);
     }
   }
   WFE_CUDA_CHECK(cudaDeviceSynchronize());

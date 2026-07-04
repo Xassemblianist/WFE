@@ -22,6 +22,10 @@ build\wfe.exe cases\warm_bubble.ini
 Çıktılar config'deki `out_dir` altına ham float32 binary + `meta.json` olarak yazılır.
 Görselleştirme: `python tools\plot_slice.py <out_dir> --var thp --step <N>` (numpy+matplotlib gerekir).
 
+Operasyonel gerçek tahmin (tek komut): `python tools\run_forecast.py cases\turkey.ini --hours 24`
+(gereken pip paketleri: numpy matplotlib eccodes cartopy netCDF4 xarray; Python
+`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`). Doğrulama: `tools\verify.py`.
+
 ## Kod kuralları
 
 - `real` tipi (`src/core/precision.hpp`) her yerde kullanılır; kernel içinde çıplak `double` sabiti yazma (FP32'de gizli dönüşüm maliyeti).
