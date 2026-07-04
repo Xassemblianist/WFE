@@ -65,7 +65,7 @@ doygunluk ayarlaması (Tetens, tek Newton adımı, gizli ısı → θ').
 | Durağanlık arazide (schaer_rest.ini) | 1 saat: |w|=0.000, θ'=0 (tam) | analitik |
 | Schär dağ dalgası (schaer.ini) | küçük ölçek evanescent, büyük ölçek yukarı yayılan eğik faz; w_max≈1.5-1.9 m/s | Schär 2002 |
 | WK82 süperhücre (wk82_supercell.ini) | fırtına bölünmesi (ayna-simetrik çift), w_max 40-48 m/s, çift yağış şeridi, stratosferik taşan tepeler | Weisman-Klemp 1982 |
-| Gerçek tahmin (turkey.ini, GFS 2026-07-04 00Z) | 24h stabil, GFS f024'e karşı RMSE: θ 2.9K (persistans 3.4K, +%14), u@8km +%20; alt seviye/PBL fiziksiz −%48 | GFS analizi |
+| Gerçek tahmin (turkey.ini, GFS 2026-07-04 00Z) | 24h stabil; fizik v1 ile GFS f024'e karşı: θ +%15, u@8km +%23, u@0.9km −%32 (fiziksiz −%48), 3B u −%11 (fiziksiz −%19) | GFS analizi |
 
 **Gerçek tahmin notları (Faz 3):** PGF tam θv ile (linearizasyon kaldırıldı);
 Coriolis tam rüzgâra, f(lat) 2D; harita faktörleri henüz yok (m=1, bölgesel

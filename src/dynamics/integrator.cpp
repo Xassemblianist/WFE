@@ -5,6 +5,7 @@
 
 #include "dynamics/kernels.hpp"
 #include "physics/kessler.hpp"
+#include "physics/surface.hpp"
 
 namespace wfe {
 
@@ -57,6 +58,7 @@ void Integrator::step(real dt, real t) {
   }
   s_n_.swap(s_stage_);
   if (dp_.moisture) kessler_step(g_, prof_, m_, dt, s_n_, rain_);
+  if (phys_) phys_->step(g_, prof_, m_, dt, t + dt, s_n_);
 }
 
 } // namespace wfe

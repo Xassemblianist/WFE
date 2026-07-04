@@ -92,7 +92,8 @@ def download(date, cyc, fh, cache: Path, bbox):
     out = cache / f"{date}_{cyc}_{fh:03d}.grib2"
     if out.exists() and out.stat().st_size > 10000:
         return out
-    lvars = "".join(f"&var_{v}=on" for v in ["UGRD", "VGRD", "TMP", "RH", "HGT", "PRES"])
+    lvars = "".join(f"&var_{v}=on"
+                    for v in ["UGRD", "VGRD", "TMP", "RH", "HGT", "PRES", "LAND"])
     levs = "".join(f"&lev_{p}_mb=on" for p in LEVELS) + "&lev_surface=on"
     url = ("https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
            f"?dir=%2Fgfs.{date}%2F{cyc}%2Fatmos&file={fname}{lvars}{levs}"
@@ -247,7 +248,7 @@ def main():
     zt = zw[-1]
     print(f"dikey: nz={nz}, zt={zt/1000:.1f} km")
 
-    # arazi: f000'in orografisi
+    # arazi + yuzey alanlari: f000'den
     f0 = download(args.date, args.cycle, 0, cache, bbox)
     fields0, lats, lons = read_grib(f0)
     h = bilinear(fields0[("orog", "surface")], lats, lons, plat, plon)
@@ -256,6 +257,10 @@ def main():
     print(f"arazi: {h.min():.0f}..{h.max():.0f} m")
 
     fcor = 2 * OMEGA * np.sin(np.radians(plat))
+    tsk = bilinear(fields0[("t", "surface")], lats, lons, plat, plon)
+    lkey = ("lsm", "surface") if ("lsm", "surface") in fields0 else ("land", "surface")
+    land = (bilinear(fields0[lkey], lats, lons, plat, plon) > 0.5).astype(np.float64)
+    print(f"yuzey: TSK {tsk.min():.0f}..{tsk.max():.0f} K, kara orani {land.mean()*100:.0f}%")
 
     # model fiziksel yukseklikleri (Gal-Chen, C++ ile birebir)
     z3 = h[None, :, :] + zc[:, None, None] * (zt - h[None, :, :]) / zt
@@ -288,10 +293,15 @@ def main():
         u_tab.astype(np.float32).tofile(f)
         h.astype(np.float32).tofile(f)
         fcor.astype(np.float32).tofile(f)
+        tsk.astype(np.float32).tofile(f)
+        land.astype(np.float32).tofile(f)
+        plat.astype(np.float32).tofile(f)
+        plon.astype(np.float32).tofile(f)
         for a in init_fields:
             a.astype(np.float32).tofile(f)
 
     meta = [
+        f"version = 2",
         f"nx = {nx}", f"ny = {ny}", f"nz = {nz}",
         f"np_prof = {npf}",
         f"start = {args.date}{args.cycle}",

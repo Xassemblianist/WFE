@@ -15,6 +15,7 @@
 #include "dynamics/integrator.hpp"
 #include "io/input.hpp"
 #include "io/writer.hpp"
+#include "physics/surface.hpp"
 
 namespace wfe {
 namespace {
@@ -232,11 +233,25 @@ int main(int argc, char** argv) {
   Integrator integ;
   integ.init(g, base.dev(), metric.dev(), dp);
   BdyManager bdy;
+  SfcPBL phys;
   if (file_mode) {
     init_from_input(g, base, input, integ.state());
     bdy.init(g, dp, &input, base.h_thb3, base.h_pib3, cfg.get_int("bdy_width", 8),
              cfg.get_real("bdy_tau", 600));
     integ.set_boundary(&bdy);
+    if (cfg.get_str("physics", "none") == "simple") {
+      // start = YYYYMMDDHH: gun-of-year + UTC saat
+      const std::string& st = input.start;
+      int mo = std::atoi(st.substr(4, 2).c_str());
+      int dy = std::atoi(st.substr(6, 2).c_str());
+      int hh = std::atoi(st.substr(8, 2).c_str());
+      static const int cum[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+      int doy = cum[mo - 1] + dy;
+      phys.init(g, input, (real)hh, doy);
+      integ.set_physics(&phys);
+      std::printf("fizik: yuzey katmani + PBL + toprak + radyasyon (doy=%d, %02d UTC)\n",
+                  doy, hh);
+    }
   } else {
     init_bubble(g, cfg, metric, integ.state());
     init_wind(g, base, integ.state());

@@ -44,11 +44,19 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [ ] Harita faktörleri mx,my (şu an m=1 yaklaşımı; Türkiye alanında ~%1-2 hata)
 - [ ] Statik arazi tipi/albedo alanları (Faz 4 yüzey fiziğiyle birlikte)
 
-## Faz 4 — Fizik parametrizasyonları
+## Faz 4 — Fizik parametrizasyonları (v1 ✅ 2026-07-04)
 
-- [ ] Radyasyon (kısa/uzun dalga, RRTMG sınıfı basitleştirilmiş başlangıç)
-- [ ] Yüzey katmanı + toprak modeli (Noah sınıfı basitleştirilmiş)
-- [ ] PBL şeması (YSU sınıfı) + alt-grid türbülans (Smagorinsky/TKE)
+- [x] Yüzey katmanı: Louis (1979) bulk aerodinamik (Cd/Ch, momentum sürtünmesi,
+      duyulur/gizli ısı) — src/physics/surface.cu
+- [x] PBL: Ri-bağımlı yerel-K profili + kolon-implicit dikey difüzyon (u,v,θ,qv)
+- [x] Levha toprak (force-restore, karada prognostik T_sfc; denizde SST sabit)
+- [x] Basit radyasyon zorlaması: güneş geometrisi + bulut-zayıflatmalı SW,
+      Brunt ampirik LW, troposferik −2 K/gün LW soğuması
+- [x] Doğrulama: Türkiye 24h yeniden koşusu — alt seviye u becerisi −%48→−%32,
+      3B u −%19→−%11, jet +%23, θ +%15; fizik maliyeti ~%16
+- [ ] Nonlocal (YSU sınıfı) PBL + karşı-gradyan terimi
+- [ ] Gerçek kolon radyasyonu (iki-akı/broadband) + toprak nemi (Noah sınıfı)
+- [ ] Üst seviye hatası: harita faktörleri + dikey seviye artırımı
 
 ## Faz 5 — Operasyonel sistem
 

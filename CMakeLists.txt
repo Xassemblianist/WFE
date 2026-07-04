@@ -23,6 +23,7 @@ add_executable(wfe
   src/dynamics/integrator.cpp
   src/dynamics/kernels.cu
   src/physics/kessler.cu
+  src/physics/surface.cu
   src/io/input.cpp
   src/io/writer.cpp
 )

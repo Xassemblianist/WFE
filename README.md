@@ -4,7 +4,11 @@ Sıfırdan C++20/CUDA ile yazılan **bölgesel sayısal hava tahmin modeli**. Uz
 WRF'nin yerini alan, GPU-yerlisi, NOAA GFS verisiyle gerçek tarih-saatli operasyonel tahmin
 üreten tam bir sistem.
 
-## Mevcut durum (Faz 3 tamamlandı — GERÇEK TAHMİN ÇALIŞIYOR)
+## Mevcut durum (Faz 4 v1 tamamlandı — FİZİKLİ GERÇEK TAHMİN)
+
+- **Fizik v1**: Louis yüzey katmanı, yerel-K PBL (implicit), levha toprak,
+  basit radyasyon (günlük döngü) → alt seviye rüzgâr becerisi belirgin düzeldi
+
 
 - **Gerçek veri tahmini**: `tools/prep_gfs.py` GFS'i NOMADS'tan indirir, Lambert
   gridine interpole eder; model GFS başlangıç + 3 saatlik Davies sınır beslemesiyle
