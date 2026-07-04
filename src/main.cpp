@@ -11,7 +11,9 @@
 #include "core/cuda_check.hpp"
 #include "core/grid.hpp"
 #include "core/metric.hpp"
+#include "dynamics/boundary.hpp"
 #include "dynamics/integrator.hpp"
+#include "io/input.hpp"
 #include "io/writer.hpp"
 
 namespace wfe {
@@ -45,6 +47,52 @@ void init_bubble(const GDims& g, const Config& cfg, const Metric& metric, State&
         }
       }
   s.thp.upload(h.data());
+}
+
+// Gercek veri baslangici: GFS'ten interpolasyonlanmis tam alanlar
+// pertubasyonlara donusturulur (u,v merkez->yuz, th->th', pi->pi').
+void init_from_input(const GDims& g, const BaseState& base, const InputData& in,
+                     State& s) {
+  auto src = [&](const std::vector<real>& a, int i, int j, int k) {
+    return a[((size_t)k * g.ny + j) * g.nx + i];
+  };
+  std::vector<real> h(g.npts(), 0);
+  for (int k = 0; k < g.nz; ++k)  // u yuzleri
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i <= g.nx; ++i) {
+        int il = i > 0 ? i - 1 : 0, ir = i < g.nx ? i : g.nx - 1;
+        h[g.idx(i, j, k)] = (real)0.5 * (src(in.u, il, j, k) + src(in.u, ir, j, k));
+      }
+  s.u.upload(h.data());
+  std::fill(h.begin(), h.end(), (real)0);
+  for (int k = 0; k < g.nz; ++k)  // v yuzleri
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) {
+        int jl = j > 0 ? j - 1 : 0;
+        h[g.idx(i, j, k)] = (real)0.5 * (src(in.v, i, jl, k) + src(in.v, i, j, k));
+      }
+  s.v.upload(h.data());
+  std::fill(h.begin(), h.end(), (real)0);
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) {
+        size_t c = g.idx(i, j, k);
+        h[c] = src(in.th, i, j, k) - base.h_thb3[c];
+      }
+  s.thp.upload(h.data());
+  std::fill(h.begin(), h.end(), (real)0);
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) {
+        size_t c = g.idx(i, j, k);
+        h[c] = src(in.pi, i, j, k) - base.h_pib3[c];
+      }
+  s.pip.upload(h.data());
+  std::fill(h.begin(), h.end(), (real)0);
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) h[g.idx(i, j, k)] = src(in.qv, i, j, k);
+  s.qv.upload(h.data());
 }
 
 // Baslangic nemi: qv = taban profili q̄v.
@@ -162,18 +210,38 @@ int main(int argc, char** argv) {
   dp.bc_y_open = cfg.get_str("bc_y", "periodic") == "open";
   dp.cstar = cfg.get_real("cstar", 30);
 
+  bool file_mode = cfg.get_str("profile", "isentropic") == "file";
+  InputData input;
+  if (file_mode) {
+    if (!input.load(g, cfg.get_str("input_dir", ""))) return 1;
+    std::printf("girdi: %s (baslangic %s, %d sinir dosyasi @ %.0fs)\n",
+                cfg.get_str("input_dir", "").c_str(), input.start.c_str(),
+                input.n_bdy, (double)input.bdy_interval);
+    dp.coriolis_use_ub = false;  // gercek veri: Coriolis tam ruzgara etkir
+  }
+
   Metric metric;
-  metric.build(g, cfg);
+  metric.build(g, cfg, file_mode ? &input.h : nullptr,
+               file_mode ? &input.fcor : nullptr);
 
   BaseState base;
-  base.build(g, cfg, metric);
+  ProfileTables tables{&input.prof_z, &input.prof_th, &input.prof_qv, &input.prof_u};
+  base.build(g, cfg, metric, file_mode ? &tables : nullptr);
   dp.moisture = base.has_moisture();
 
   Integrator integ;
   integ.init(g, base.dev(), metric.dev(), dp);
-  init_bubble(g, cfg, metric, integ.state());
-  init_wind(g, base, integ.state());
-  init_moisture(g, base, integ.state());
+  BdyManager bdy;
+  if (file_mode) {
+    init_from_input(g, base, input, integ.state());
+    bdy.init(g, dp, &input, base.h_thb3, base.h_pib3, cfg.get_int("bdy_width", 8),
+             cfg.get_real("bdy_tau", 600));
+    integ.set_boundary(&bdy);
+  } else {
+    init_bubble(g, cfg, metric, integ.state());
+    init_wind(g, base, integ.state());
+    init_moisture(g, base, integ.state());
+  }
 
   Writer writer;
   writer.init(g, out_dir, dt, dp.moisture);
@@ -195,7 +263,7 @@ int main(int argc, char** argv) {
 
   auto t0 = std::chrono::steady_clock::now();
   for (int step = 1; step <= nsteps; ++step) {
-    integ.step(dt);
+    integ.step(dt, (step - 1) * dt);
     real t = step * dt;
 
     if (step % diag_steps == 0 || step == nsteps) {

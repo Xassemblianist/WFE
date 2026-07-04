@@ -185,6 +185,21 @@ __global__ void k_stage_q(const real* s0, const real* tend, real dt, real* out,
   out[idx] = s0[idx] + dt * tend[idx];
 }
 
+// Davies sinir relaksasyonu: tend += w(i,j) [ (1-tf) lo + tf hi - f ].
+__global__ void k_bdy_relax(GDims g, int imax, int jmax, const real* f, const real* lo,
+                            const real* hi, real tf, const real* wgt, real* tend) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int j = blockIdx.y * blockDim.y + threadIdx.y;
+  int k = blockIdx.z * blockDim.z + threadIdx.z;
+  if (i >= imax || j >= jmax || k >= g.nz) return;
+  int iw = i < g.nx ? i : g.nx - 1;
+  int jw = j < g.ny ? j : g.ny - 1;
+  real w = wgt[g2(g, iw, jw)];
+  if (w <= (real)0) return;
+  size_t c = gidx(g, i, j, k);
+  tend[c] += w * (((real)1 - tf) * lo[c] + tf * hi[c] - f[c]);
+}
+
 // ----------------------------------------------------------------- momentum
 
 __global__ void k_tend_u(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
@@ -222,9 +237,9 @@ __global__ void k_tend_u(GDims g, DevProf p, DevMetric m, DynParams dp, DevState
                          p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)]);
   real vavg = (real)0.25 * (s.v[gidx(g, i - 1, j, k)] + s.v[gidx(g, i - 1, j + 1, k)] +
                             s.v[gidx(g, i, j, k)] + s.v[gidx(g, i, j + 1, k)]);
+  real fc = (real)0.5 * (m.fcor[g2(g, i - 1, j)] + m.fcor[g2(g, i, j)]);
   real relax = -ray_alpha(m.zeta_c[kk], m.zt, dp) * (U(i, j, k) - p.ub[kk]);
-  tend[gidx(g, i, j, k)] =
-      (-fdiv + U(i, j, k) * dv) / ru + dp.coriolis_f * vavg + relax;
+  tend[gidx(g, i, j, k)] = (-fdiv + U(i, j, k) * dv) / ru + fc * vavg + relax;
 }
 
 __global__ void k_tend_v(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
@@ -259,9 +274,11 @@ __global__ void k_tend_v(GDims g, DevProf p, DevMetric m, DynParams dp, DevState
                          p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)]);
   real uavg = (real)0.25 * (s.u[gidx(g, i, j - 1, k)] + s.u[gidx(g, i + 1, j - 1, k)] +
                             s.u[gidx(g, i, j, k)] + s.u[gidx(g, i + 1, j, k)]);
+  real fc = (real)0.5 * (m.fcor[g2(g, i, j - 1)] + m.fcor[g2(g, i, j)]);
+  real uref = dp.coriolis_use_ub ? p.ub[kk] : (real)0;
   real relax = -ray_alpha(m.zeta_c[kk], m.zt, dp) * V(i, j, k);
-  tend[gidx(g, i, j, k)] = (-fdiv + V(i, j, k) * dv) / rv -
-                           dp.coriolis_f * (uavg - p.ub[kk]) + relax;
+  tend[gidx(g, i, j, k)] =
+      (-fdiv + V(i, j, k) * dv) / rv - fc * (uavg - uref) + relax;
 }
 
 __global__ void k_tend_w(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
@@ -321,22 +338,30 @@ __global__ void k_diffuse(GDims g, DevMetric m, real K, const real* f, real* ten
 constexpr int WFE_MAX_NZ = 320;  // kolon cozucunun yerel dizi siniri (nz+1 <= bu)
 
 // u,v guncellemesi: pi* = pi' + smdiv (pi' - pi'_onceki); arazi capraz terimi
-// (dz/dx * dpi/dzeta) explicit.
+// (dz/dx * dpi/dzeta) explicit. PGF katsayisi TAM sanal pot. sicaklik
+// (theta_b + theta')(1 + 0.61 qv): sinoptik olcekli buyuk pertubasyonlarda
+// dogrulugu korur (Faz 3).
 __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dtau,
                           real* u, real* v, const real* pip, const real* piprev,
-                          const real* tu, const real* tv) {
+                          const real* tu, const real* tv, const real* thp,
+                          const real* qv) {
   WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
   const int kk = k + g.ng;
   auto ps = [&](int ii, int jj, int kz) {
     size_t c = gidx(g, ii, jj, kz);
     return pip[c] + dp.acoustic_smdiv * (pip[c] - piprev[c]);
   };
+  auto thv = [&](int ii, int jj) {
+    size_t c = gidx(g, ii, jj, k);
+    real t = p.thb[c] + thp[c];
+    if (dp.moisture) t *= (real)1 + phys::eps61 * qv[c];
+    return t;
+  };
   real ps0 = ps(i, j, k);
   real dzc2 = m.zeta_c[kk + 1] - m.zeta_c[kk - 1];
 
   if (!(dp.bc_x_open && i == 0)) {
-    real thbu = (real)0.5 *
-                (p.thvb[gidx(g, i - 1, j, k)] + p.thvb[gidx(g, i, j, k)]);
+    real thbu = (real)0.5 * (thv(i - 1, j) + thv(i, j));
     real grad = (ps0 - ps(i - 1, j, k)) / g.dx;
     real zxu = m.hx_u[g2(g, i, j)] * ((real)1 - m.zeta_c[kk] / m.zt);
     if (zxu != (real)0) {
@@ -349,8 +374,7 @@ __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dt
     u[gidx(g, i, j, k)] += dtau * (-phys::cp * thbu * grad + tu[gidx(g, i, j, k)]);
   }
   if (!(dp.bc_y_open && j == 0)) {
-    real thbv = (real)0.5 *
-                (p.thvb[gidx(g, i, j - 1, k)] + p.thvb[gidx(g, i, j, k)]);
+    real thbv = (real)0.5 * (thv(i, j - 1) + thv(i, j));
     real grad = (ps0 - ps(i, j - 1, k)) / g.dy;
     real zyv = m.hy_v[g2(g, i, j)] * ((real)1 - m.zeta_c[kk] / m.zt);
     if (zyv != (real)0) {
@@ -369,7 +393,8 @@ __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dt
 __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real dtau,
                            const real* u, const real* v, real* w, real* pip,
                            real* piprev, real* thp, const real* tw, const real* tth,
-                           const real* qv, const real* qc, const real* qr) {
+                           const real* tpi, const real* qv, const real* qc,
+                           const real* qr) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   int j = blockIdx.y * blockDim.y + threadIdx.y;
   if (i >= g.nx || j >= g.ny) return;
@@ -417,9 +442,10 @@ __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real d
     real dzc = m.dzeta_c[kk];
     real wk = w[gidx(g, i, j, k)];
     real wkp = w[gidx(g, i, j, k + 1)];
-    P[k] = pip[c] - dtau * Kt *
-                        (Dh - (Sv[k + 1] - Sv[k]) / dzc +
-                         c2 * (Av[k + 1] * wkp - Av[k] * wk) / dzc);
+    P[k] = pip[c] + dtau * tpi[c] -
+           dtau * Kt *
+               (Dh - (Sv[k + 1] - Sv[k]) / dzc +
+                c2 * (Av[k + 1] * wkp - Av[k] * wk) / dzc);
     E[k] = dtau * Kt * c1 / dzc;
   }
 
@@ -427,7 +453,10 @@ __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real d
     int kk = k + g.ng;
     size_t c = gidx(g, i, j, k);
     size_t cm = gidx(g, i, j, k - 1);
-    real G = dtau * phys::cp * p.thvbw[c] * c1 / (J * m.dzeta_w[kk]);
+    // w-PGF katsayisi: tam sanal pot. sicaklik w seviyesinde
+    real thvw = p.thbw[c] + (real)0.5 * (thp[cm] + thp[c]);
+    if (dp.moisture) thvw *= (real)1 + phys::eps61 * (real)0.5 * (qv[cm] + qv[c]);
+    real G = dtau * phys::cp * thvw * c1 / (J * m.dzeta_w[kk]);
     real A = -G * E[k - 1] * Av[k - 1];
     real B = (real)1 + G * Av[k] * (E[k] + E[k - 1]);
     real C = -G * E[k] * Av[k + 1];
@@ -439,7 +468,7 @@ __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real d
       buoy += phys::grav * (phys::eps61 * dqv - qcr);
     }
     real RHS = w[c] + dtau * (buoy + tw[c]) -
-               dtau * phys::cp * p.thvbw[c] * c2 *
+               dtau * phys::cp * thvw * c2 *
                    (pip[gidx(g, i, j, k)] - pip[gidx(g, i, j, k - 1)]) /
                    (J * m.dzeta_w[kk]);
     real D = RHS - G * (P[k] - P[k - 1]);
@@ -706,7 +735,8 @@ void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
     k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qr.d, mfx.d, mfy.d,
                                                    mfz.d, div.d, tend.qr.d);
   }
-  // pi' yavas egilimi yok (tend.pip 0 kalir)
+  // pi' yavas egilimi: adveksiyon yok; sinir relaksasyonu sonradan ekleyebilir
+  tend.pip.zero();
   if (dp.diff_K > (real)0) {
     k_diffuse<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, m, dp.diff_K, s.u.d, tend.u.d, 0,
                                                     g.nz, 0);
@@ -726,7 +756,7 @@ void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
   dim3 blk = tile_block();
   k_acou_uv<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, dtau, s.u.d, s.v.d,
                                                   s.pip.d, piprev.d, tend.u.d,
-                                                  tend.v.d);
+                                                  tend.v.d, s.thp.d, s.qv.d);
   if (dp.bc_x_open) {
     dim3 b2(32, 8);
     dim3 g2d((g.ny + 31) / 32, (g.nz + 7) / 8);
@@ -746,7 +776,8 @@ void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
   dim3 bcol(32, 8);
   dim3 gcol((g.nx + 31) / 32, (g.ny + 7) / 8);
   k_acou_wpi<<<gcol, bcol>>>(g, p, m, dp, dtau, s.u.d, s.v.d, s.w.d, s.pip.d, piprev.d,
-                             s.thp.d, tend.w.d, tend.thp.d, s.qv.d, s.qc.d, s.qr.d);
+                             s.thp.d, tend.w.d, tend.thp.d, tend.pip.d, s.qv.d,
+                             s.qc.d, s.qr.d);
 
   // sonraki alt-adim pi' yanal ghost'lari + capraz terim icin dusey ghost'lari okur
   bc_lateral_x(g, dp, s.pip.d, g.nx - 1);
@@ -755,6 +786,22 @@ void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
   dim3 g2d((g.NX + 31) / 32, (g.NY + 7) / 8);
   k_bc_z_zerograd<<<g2d, b2>>>(g, s.pip.d);
   check_kernel("acoustic_substep");
+}
+
+void bdy_relax(const GDims& g, const State& s, const Field3D lo[5], const Field3D hi[5],
+               real tf, const Field3D& wgt, State& tend) {
+  dim3 blk = tile_block();
+  k_bdy_relax<<<tile_grid(g.nx + 1, g.ny, g.nz), blk>>>(
+      g, g.nx + 1, g.ny, s.u.d, lo[0].d, hi[0].d, tf, wgt.d, tend.u.d);
+  k_bdy_relax<<<tile_grid(g.nx, g.ny + 1, g.nz), blk>>>(
+      g, g.nx, g.ny + 1, s.v.d, lo[1].d, hi[1].d, tf, wgt.d, tend.v.d);
+  k_bdy_relax<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(
+      g, g.nx, g.ny, s.thp.d, lo[2].d, hi[2].d, tf, wgt.d, tend.thp.d);
+  k_bdy_relax<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(
+      g, g.nx, g.ny, s.pip.d, lo[3].d, hi[3].d, tf, wgt.d, tend.pip.d);
+  k_bdy_relax<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(
+      g, g.nx, g.ny, s.qv.d, lo[4].d, hi[4].d, tf, wgt.d, tend.qv.d);
+  check_kernel("bdy_relax");
 }
 
 void update_moisture_stage(const State& s0, const State& tend, real dt, State& out) {

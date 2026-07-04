@@ -31,10 +31,12 @@ void Integrator::init(const GDims& g, const DevProf& prof, const DevMetric& m,
   rain_.alloc((size_t)g.NX * g.NY);
 }
 
-void Integrator::step(real dt) {
+void Integrator::step(real dt, real t) {
   const real stage_dt[3] = {dt / 3, dt / 2, dt};
   const int ns = std::max(1, dp_.acoustic_ns);
   const int ns_stage[3] = {1, std::max(1, ns / 2), ns};
+
+  if (bdy_ && bdy_->active()) bdy_->update(t);
 
   for (int m = 0; m < 3; ++m) {
     State& est = (m == 0) ? s_n_ : s_stage_;  // yavas egilimlerin kaynagi
@@ -42,6 +44,8 @@ void Integrator::step(real dt) {
     compute_mass_fluxes(g_, prof_, m_, est, mfx_, mfy_, mfz_);
     compute_divergence(g_, m_, mfx_, mfy_, mfz_, div_);
     compute_tendencies(g_, prof_, m_, dp_, est, mfx_, mfy_, mfz_, div_, tend_);
+    if (bdy_ && bdy_->active())
+      bdy_relax(g_, est, bdy_->lo_, bdy_->hi_, bdy_->tfrac(t), bdy_->wgt_, tend_);
 
     s_work_.copy_from(s_n_);  // hizli sistem her asamada zaman-n'den baslar
     piprev_.copy_from(s_n_.pip);

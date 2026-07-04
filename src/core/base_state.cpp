@@ -18,7 +18,8 @@ double qsat_of(double p, double T) {
 }
 } // namespace
 
-void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric) {
+void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric,
+                      const ProfileTables* tables) {
   release();
 
   std::string prof = cfg.get_str("profile", "isentropic");
@@ -26,16 +27,33 @@ void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric) {
   real bvN = cfg.get_real("bv_N", (real)0.01);
   bool constN = (prof == "constant_N");
   bool wk82 = (prof == "wk82");
-  has_moisture_ = wk82;
-  if (!constN && !wk82 && prof != "isentropic") {
+  bool from_file = (prof == "file");
+  if (from_file && (!tables || !tables->z)) {
+    std::fprintf(stderr, "profile=file ama tablolar saglanmadi\n");
+    std::exit(1);
+  }
+  has_moisture_ = wk82 || from_file;
+  if (!constN && !wk82 && !from_file && prof != "isentropic") {
     std::fprintf(stderr, "bilinmeyen profile: %s\n", prof.c_str());
     std::exit(1);
   }
+
+  auto table_interp = [&](const std::vector<real>& tab, double z) -> double {
+    const std::vector<real>& zt = *tables->z;
+    double dzt = zt[1] - zt[0];
+    double s = (z - zt[0]) / dzt;
+    int it = (int)s;
+    if (it < 0) it = 0;
+    if (it > (int)zt.size() - 2) it = (int)zt.size() - 2;
+    double f = s - it;
+    return tab[it] * (1 - f) + tab[it + 1] * f;
+  };
 
   // WK82 sounding parametreleri
   const double z_tr = 12000.0, th_tr = 343.0, T_tr = 213.0, qv_max = 0.014;
 
   auto theta_of_z = [&](double z) -> double {
+    if (from_file) return table_interp(*tables->th, z);
     if (wk82) {
       if (z <= z_tr) return 300.0 + (th_tr - 300.0) * std::pow(z / z_tr, 1.25);
       return th_tr * std::exp((double)phys::grav * (z - z_tr) / ((double)phys::cp * T_tr));
@@ -87,6 +105,13 @@ void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric) {
       }
       integrate_pi();
     }
+  } else if (from_file) {
+    for (int it = 0; it < ntab; ++it) {
+      double z = zmin + it * dzt;
+      qvtab[it] = std::max(0.0, table_interp(*tables->qv, z));
+      thvtab[it] = theta_of_z(z) * (1.0 + (double)phys::eps61 * qvtab[it]);
+    }
+    integrate_pi();
   }
 
   auto interp = [&](const std::vector<double>& tab, double z) -> double {
@@ -113,8 +138,8 @@ void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric) {
         double zc = metric.z_at(g, i, j, metric.h_zeta_c[k + g.ng]);
         double zw = metric.z_at(g, i, j, metric.h_zeta_w[k + g.ng]);
         double thc = theta_of_z(zc), thw = theta_of_z(zw);
-        double qvc = wk82 ? interp(qvtab, zc) : 0.0;
-        double qvw = wk82 ? interp(qvtab, zw) : 0.0;
+        double qvc = has_moisture_ ? interp(qvtab, zc) : 0.0;
+        double qvw = has_moisture_ ? interp(qvtab, zw) : 0.0;
         double thvc = thc * (1.0 + (double)phys::eps61 * qvc);
         double thvw = thw * (1.0 + (double)phys::eps61 * qvw);
         double pic = interp(pitab, zc), piw = interp(pitab, zw);
@@ -129,6 +154,8 @@ void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric) {
         h_qvb_[c] = (real)qvc;
       }
 
+  h_thb3 = b_thb;  // girdi/sinir alanlarinin pertubasyona donusumu icin
+  h_pib3 = b_pib;
   thb_.alloc(n);    thb_.upload(b_thb.data());
   pib_.alloc(n);    pib_.upload(b_pib.data());
   rhob_.alloc(n);   rhob_.upload(b_rhob.data());
@@ -152,6 +179,12 @@ void BaseState::build(const GDims& g, const Config& cfg, const Metric& metric) {
       double z = metric.h_zeta_c[kk];  // duz zeminli firtina testlerinde zeta ~ z
       if (z < 0) z = 0;
       h_ub[kk] = (real)(us * std::tanh(z / zs) + uoff);
+    }
+  } else if (from_file && tables->u) {
+    for (int kk = 0; kk < g.NZ; ++kk) {
+      double z = metric.h_zeta_c[kk];
+      if (z < 0) z = 0;
+      h_ub[kk] = (real)table_interp(*tables->u, z);
     }
   }
   WFE_CUDA_CHECK(cudaMalloc(&d_ub_, g.NZ * sizeof(real)));

@@ -7,7 +7,8 @@ namespace wfe {
 // Dinamik cekirdegin config'den gelen parametreleri (bkz. cases/*.ini).
 struct DynParams {
   real diff_K = 0;          // sabit yayilim katsayisi [m2 s-1] (0 = kapali)
-  real coriolis_f = 0;      // f-plane parametresi [s-1] (0 = kapali)
+  real coriolis_f = 0;      // f-plane parametresi [s-1] (0 = kapali; dosyada f(lat))
+  bool coriolis_use_ub = true;  // idealize: f(u-ub); gercek veri: tam ruzgar
   real rayleigh_zd = -1;    // Rayleigh katmani taban yuksekligi [m] (<0 = kapali)
   real rayleigh_alpha = 0;  // maksimum sonumleme katsayisi [s-1]
   int acoustic_ns = 6;      // buyuk adim basina akustik alt-adim sayisi

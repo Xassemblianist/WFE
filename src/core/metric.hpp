@@ -24,6 +24,7 @@ struct DevMetric {
   const real* hx_u;     // [NX*NY] dh/dx u noktalarinda
   const real* hy_v;     // [NX*NY] dh/dy v noktalarinda
   const real* jac;      // [NX*NY] J = (zt-h)/zt merkez kolonlarda
+  const real* fcor;     // [NX*NY] Coriolis parametresi f(lat) [1/s]
   real zt;              // model tepesi [m]
 };
 
@@ -32,11 +33,14 @@ inline size_t idx2(const GDims& g, int i, int j) {
   return (size_t)(j + g.ng) * g.NX + (i + g.ng);
 }
 
-// terrain = none | schaer | gauss  (analitik; gercek topografya Faz 3'te)
+// terrain = none | schaer | gauss | file (h_file: interior ny*nx, prep'ten)
 // stretch = none | geometric (dz0'dan dz_max'a buyuyen hucre kalinligi)
+// fcor: sabit (cfg coriolis_f) veya dosyadan f(lat) (fcor_file, interior)
 class Metric {
  public:
-  void build(const GDims& g, const Config& cfg);
+  void build(const GDims& g, const Config& cfg,
+             const std::vector<real>* h_file = nullptr,
+             const std::vector<real>* fcor_file = nullptr);
   void release();
   DevMetric dev() const;
 

@@ -29,14 +29,24 @@ struct DevProf {
 // Hidrostatik dengede yatay-homojen (fiziksel z'de) taban durumu; grid
 // noktalarina z(i,j,k) uzerinden degerlendirilir. Nemli profillerde denge
 // sanal potansiyel sicaklikla kurulur (iteratif). (Sounding dosyasi Faz 3'te.)
-// profile = isentropic | constant_N | wk82 (Weisman-Klemp 1982 firtina soundingi)
+// profile = isentropic | constant_N | wk82 | file (prep tablolarindan)
+// file modunda tablolar (z, theta, qv, u alan-ortalama profilleri) verilir.
+struct ProfileTables {
+  const std::vector<real>* z = nullptr;
+  const std::vector<real>* th = nullptr;
+  const std::vector<real>* qv = nullptr;
+  const std::vector<real>* u = nullptr;
+};
+
 class BaseState {
  public:
-  void build(const GDims& g, const Config& cfg, const Metric& metric);
+  void build(const GDims& g, const Config& cfg, const Metric& metric,
+             const ProfileTables* tables = nullptr);
   void release();
   DevProf dev() const;
 
   std::vector<real> h_ub;   // 1B taban ruzgari (baslangic kosulu icin)
+  std::vector<real> h_thb3, h_pib3;  // 3B host kopyalar (girdi/sinir donusumu)
   bool has_moisture() const { return has_moisture_; }
   // q̄v'yi grid noktasina degerlendir (baslangic kosulu icin)
   real qvb_at(const GDims& g, int i, int j, int k) const {

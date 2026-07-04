@@ -9,7 +9,8 @@
 
 namespace wfe {
 
-void Metric::build(const GDims& g, const Config& cfg) {
+void Metric::build(const GDims& g, const Config& cfg, const std::vector<real>* h_file,
+                   const std::vector<real>* fcor_file) {
   release();
   n1_ = (size_t)g.NZ;
   n2_ = (size_t)g.NX * g.NY;
@@ -81,21 +82,58 @@ void Metric::build(const GDims& g, const Config& cfg) {
     return 0.0;
   };
 
-  for (int j = -g.ng; j < g.ny + g.ng; ++j)
-    for (int i = -g.ng; i < g.nx + g.ng; ++i) {
-      double x = ((double)i + 0.5) * g.dx;
-      double y = ((double)j + 0.5) * g.dy;
-      size_t c = idx2(g, i, j);
-      h_h[c] = (real)h_of(x, y);
-      h_jac[c] = (zt_ - h_h[c]) / zt_;
-      hx[c] = (real)((h_of(x + g.dx, y) - h_of(x - g.dx, y)) / (2.0 * g.dx));
-      hy[c] = (real)((h_of(x, y + g.dy) - h_of(x, y - g.dy)) / (2.0 * g.dy));
-      hxu[c] = (real)((h_of(x, y) - h_of(x - g.dx, y)) / g.dx);   // u noktasi (i-1/2)
-      hyv[c] = (real)((h_of(x, y) - h_of(x, y - g.dy)) / g.dy);   // v noktasi (j-1/2)
-    }
+  bool file_terrain = (terrain == "file");
+  if (file_terrain && !h_file) {
+    std::fprintf(stderr, "terrain=file ama arazi verisi saglanmadi\n");
+    std::exit(1);
+  }
+  if (file_terrain) {
+    // interior'dan padded'a kenar-sabitleyerek kopyala, turevler sayisal
+    auto clampi = [&](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    for (int j = -g.ng; j < g.ny + g.ng; ++j)
+      for (int i = -g.ng; i < g.nx + g.ng; ++i) {
+        int ic = clampi(i, 0, g.nx - 1), jc = clampi(j, 0, g.ny - 1);
+        h_h[idx2(g, i, j)] = (*h_file)[(size_t)jc * g.nx + ic];
+      }
+    for (int j = -g.ng; j < g.ny + g.ng; ++j)
+      for (int i = -g.ng; i < g.nx + g.ng; ++i) {
+        size_t c = idx2(g, i, j);
+        h_jac[c] = (zt_ - h_h[c]) / zt_;
+        int im = i > -g.ng ? i - 1 : i, ip = i < g.nx + g.ng - 1 ? i + 1 : i;
+        int jm = j > -g.ng ? j - 1 : j, jp = j < g.ny + g.ng - 1 ? j + 1 : j;
+        hx[c] = (h_h[idx2(g, ip, j)] - h_h[idx2(g, im, j)]) / ((real)(ip - im) * g.dx);
+        hy[c] = (h_h[idx2(g, i, jp)] - h_h[idx2(g, i, jm)]) / ((real)(jp - jm) * g.dy);
+        hxu[c] = (i == im) ? (real)0 : (h_h[c] - h_h[idx2(g, im, j)]) / g.dx;
+        hyv[c] = (j == jm) ? (real)0 : (h_h[c] - h_h[idx2(g, i, jm)]) / g.dy;
+      }
+  } else {
+    for (int j = -g.ng; j < g.ny + g.ng; ++j)
+      for (int i = -g.ng; i < g.nx + g.ng; ++i) {
+        double x = ((double)i + 0.5) * g.dx;
+        double y = ((double)j + 0.5) * g.dy;
+        size_t c = idx2(g, i, j);
+        h_h[c] = (real)h_of(x, y);
+        h_jac[c] = (zt_ - h_h[c]) / zt_;
+        hx[c] = (real)((h_of(x + g.dx, y) - h_of(x - g.dx, y)) / (2.0 * g.dx));
+        hy[c] = (real)((h_of(x, y + g.dy) - h_of(x, y - g.dy)) / (2.0 * g.dy));
+        hxu[c] = (real)((h_of(x, y) - h_of(x - g.dx, y)) / g.dx);  // u noktasi (i-1/2)
+        hyv[c] = (real)((h_of(x, y) - h_of(x, y - g.dy)) / g.dy);  // v noktasi (j-1/2)
+      }
+  }
 
-  // tek tampon: 4 dikey [n1] + 6 yatay [n2]
-  size_t total = 4 * n1_ + 6 * n2_;
+  // Coriolis: dosyadan f(lat) veya sabit f-plane
+  std::vector<real> fc(n2_, cfg.get_real("coriolis_f", 0));
+  if (fcor_file) {
+    auto clampi = [&](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    for (int j = -g.ng; j < g.ny + g.ng; ++j)
+      for (int i = -g.ng; i < g.nx + g.ng; ++i) {
+        int ic = clampi(i, 0, g.nx - 1), jc = clampi(j, 0, g.ny - 1);
+        fc[idx2(g, i, j)] = (*fcor_file)[(size_t)jc * g.nx + ic];
+      }
+  }
+
+  // tek tampon: 4 dikey [n1] + 7 yatay [n2]
+  size_t total = 4 * n1_ + 7 * n2_;
   WFE_CUDA_CHECK(cudaMalloc(&d_all_, total * sizeof(real)));
   size_t off = 0;
   auto up = [&](const std::vector<real>& v) {
@@ -113,6 +151,7 @@ void Metric::build(const GDims& g, const Config& cfg) {
   up(hxu);
   up(hyv);
   up(h_jac);
+  up(fc);
 }
 
 void Metric::release() {
@@ -135,6 +174,7 @@ DevMetric Metric::dev() const {
   m.hx_u = d_all_ + off; off += n2_;
   m.hy_v = d_all_ + off; off += n2_;
   m.jac = d_all_ + off; off += n2_;
+  m.fcor = d_all_ + off; off += n2_;
   m.zt = zt_;
   return m;
 }

@@ -31,12 +31,18 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [ ] WSM6 sınıfı buz mikrofiziği (kar/graupel; kış yağışları için — Faz 4 ile)
 - [ ] Pozitif-tanımlı nem adveksiyonu (5. mertebe şemanın alt-aşımlarını keser)
 
-## Faz 3 — Gerçek veri: WPS muadili
+## Faz 3 — Gerçek veri: WPS muadili ✅ (2026-07-04, harita faktörleri hariç)
 
-- [ ] Lambert konformal projeksiyon + harita faktörleri
-- [ ] GFS GRIB2 okuyucu (ecCodes) + otomatik indirme (NOMADS)
-- [ ] Yatay/dikey interpolasyon, dengeleme, statik alanlar (topografya, arazi tipi)
-- [ ] Zamana bağlı sınır koşulu beslemesi (boundary relaxation zone)
+- [x] Lambert konformal projeksiyon (ileri/ters + rüzgâr rotasyonu, prep'te)
+- [x] GFS GRIB2 okuma (ecCodes/pip) + NOMADS filter otomatik indirme (tools/prep_gfs.py)
+- [x] Yatay bilinear + dikey interpolasyon, θ̄v-tutarlı taban, GFS topografyası,
+      f(lat) 2D Coriolis, tam-θv PGF
+- [x] Davies sınır relaksasyon bölgesi (cos² rampa, 3 saatlik GFS beslemesi)
+- [x] İlk gerçek tahmin: Türkiye 24h @ 12 km, 52 s duvar zamanı (1671× gerçek-zaman);
+      doğrulama GFS f024'e karşı: θ persistansı +%14, jet seviyesi u +%20 yener;
+      alt seviyeler PBL fiziksiz kaybeder (Faz 4 gerekçesi)
+- [ ] Harita faktörleri mx,my (şu an m=1 yaklaşımı; Türkiye alanında ~%1-2 hata)
+- [ ] Statik arazi tipi/albedo alanları (Faz 4 yüzey fiziğiyle birlikte)
 
 ## Faz 4 — Fizik parametrizasyonları
 

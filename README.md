@@ -4,11 +4,20 @@ Sıfırdan C++20/CUDA ile yazılan **bölgesel sayısal hava tahmin modeli**. Uz
 WRF'nin yerini alan, GPU-yerlisi, NOAA GFS verisiyle gerçek tarih-saatli operasyonel tahmin
 üreten tam bir sistem.
 
-## Mevcut durum (Faz 2 tamamlandı)
+## Mevcut durum (Faz 3 tamamlandı — GERÇEK TAHMİN ÇALIŞIYOR)
 
-- **Nemli dinamik + Kessler mikrofiziği**: qv/qc/qr prognostikleri, gizli ısı,
-  yağmur sedimentasyonu ve yüzey yağış birikimi → WK82 süperhücre testinde
-  fırtına bölünmesi (w_max ~45 m/s, 2 saatlik fırtına, gerçek zamandan 457× hızlı)
+- **Gerçek veri tahmini**: `tools/prep_gfs.py` GFS'i NOMADS'tan indirir, Lambert
+  gridine interpole eder; model GFS başlangıç + 3 saatlik Davies sınır beslemesiyle
+  koşar. Türkiye 24h @ 12 km: **52 saniye** (1671× gerçek-zaman). Jet seviyesi
+  rüzgârda ve sıcaklıkta persistansı yener (fizik paketleri henüz yok → Faz 4).
+- **Nemli dinamik + Kessler mikrofiziği**: WK82 süperhücre testinde fırtına
+  bölünmesi (w_max ~45 m/s, 457× gerçek-zaman)
+
+```
+# gercek tahmin akisi
+python tools\prep_gfs.py cases\turkey.ini --date 20260704 --cycle 00 --hours 24
+build\wfe.exe cases\turkey.ini
+```
 
 
 - 3B, tam sıkıştırılabilir, **non-hidrostatik dinamik çekirdek** (Klemp–Wilhelmson denklem seti)

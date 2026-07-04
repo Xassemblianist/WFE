@@ -19,9 +19,11 @@ add_executable(wfe
   src/core/config.cpp
   src/core/base_state.cpp
   src/core/metric.cpp
+  src/dynamics/boundary.cpp
   src/dynamics/integrator.cpp
   src/dynamics/kernels.cu
   src/physics/kessler.cu
+  src/io/input.cpp
   src/io/writer.cpp
 )
 

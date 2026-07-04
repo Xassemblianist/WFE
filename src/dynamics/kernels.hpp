@@ -40,4 +40,8 @@ void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
 // (hizli terimleri olmadigindan akustik donguye girmezler).
 void update_moisture_stage(const State& s0, const State& tend, real dt, State& out);
 
+// Davies sinir relaksasyonu (u,v,thp,pip,qv): yavas egilimlere nudge ekler.
+void bdy_relax(const GDims& g, const State& s, const Field3D lo[5], const Field3D hi[5],
+               real tf, const Field3D& wgt, State& tend);
+
 } // namespace wfe
