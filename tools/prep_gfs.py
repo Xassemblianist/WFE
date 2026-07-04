@@ -18,6 +18,7 @@ Gereksinim: numpy, eccodes (pip install eccodes)
 import argparse
 import math
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -100,10 +101,17 @@ def download(date, cyc, fh, cache: Path, bbox):
            f"&subregion=&leftlon={bbox[0]}&rightlon={bbox[1]}"
            f"&toplat={bbox[3]}&bottomlat={bbox[2]}")
     print(f"  indiriliyor: f{fh:03d} ...", flush=True)
-    urllib.request.urlretrieve(url, out)
-    if out.stat().st_size < 10000:
-        raise RuntimeError(f"indirme basarisiz ({out.stat().st_size} B): {url}")
-    return out
+    for attempt in range(3):
+        try:
+            urllib.request.urlretrieve(url, out)
+            if out.stat().st_size >= 10000 and out.read_bytes()[:4] == b"GRIB":
+                return out
+        except Exception as e:
+            print(f"    deneme {attempt+1} basarisiz: {e}")
+        out.unlink(missing_ok=True)
+        if attempt < 2:
+            time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"indirme 3 denemede basarisiz: f{fh:03d}")
 
 
 def read_grib(path):

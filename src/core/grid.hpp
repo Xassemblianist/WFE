@@ -35,4 +35,7 @@ inline GDims make_grid(int nx, int ny, int nz, int ng, real dx, real dy, real dz
   return GDims{nx, ny, nz, ng, nx + 2 * ng, ny + 2 * ng, nz + 1 + 2 * ng, dx, dy, dz};
 }
 
+// Kolon cozuculerin (akustik, PBL, mikrofizik) yerel dizi siniri: nz+1 <= bu.
+inline constexpr int MAX_COLUMN_LEVELS = 320;
+
 } // namespace wfe

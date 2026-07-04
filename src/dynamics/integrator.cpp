@@ -15,8 +15,9 @@ void Integrator::init(const GDims& g, const DevProf& prof, const DevMetric& m,
   prof_ = prof;
   m_ = m;
   dp_ = dp;
-  if (g.nz + 1 > 320) {  // k_acou_wpi kolon cozucusunun yerel dizi siniri
-    std::fprintf(stderr, "nz=%d cok buyuk (kolon cozucu siniri 319)\n", g.nz);
+  if (g.nz + 1 > MAX_COLUMN_LEVELS) {  // kolon cozuculerin yerel dizi siniri
+    std::fprintf(stderr, "nz=%d cok buyuk (kolon cozucu siniri %d)\n", g.nz,
+                 MAX_COLUMN_LEVELS - 1);
     std::exit(1);
   }
   size_t n = g.npts();
@@ -44,7 +45,7 @@ void Integrator::step(real dt, real t) {
     apply_bcs(g_, dp_, est);
     compute_mass_fluxes(g_, prof_, m_, est, mfx_, mfy_, mfz_);
     compute_divergence(g_, m_, mfx_, mfy_, mfz_, div_);
-    compute_tendencies(g_, prof_, m_, dp_, est, mfx_, mfy_, mfz_, div_, tend_);
+    compute_tendencies(g_, prof_, m_, dp_, dt, est, mfx_, mfy_, mfz_, div_, tend_);
     if (bdy_ && bdy_->active())
       bdy_relax(g_, est, bdy_->lo_, bdy_->hi_, bdy_->tfrac(t), bdy_->wgt_, tend_);
 

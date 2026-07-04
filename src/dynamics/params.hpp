@@ -18,6 +18,8 @@ struct DynParams {
   bool bc_y_open = false;
   real cstar = 30;          // radyasyon BC faz hizi [m s-1] (Klemp-Wilhelmson)
   bool moisture = false;    // qv/qc/qr prognostikleri + Kessler mikrofizigi
+  bool w_damping = false;   // dikey Courant > 1'de w'yi yerel sonumle (WRF tarzi)
+  real w_abort = 150;       // |w| bu esigi asarsa kosuyu durdur [m/s]
 };
 
 } // namespace wfe

@@ -1,15 +1,16 @@
-#include "physics/surface.hpp"
+﻿#include "physics/surface.hpp"
 
 #include <cmath>
 #include <vector>
 
 #include "core/constants.hpp"
 #include "core/cuda_check.hpp"
+#include "core/thermo.hpp"
 
 namespace wfe {
 namespace {
 
-constexpr int SFC_MAX_NZ = 320;
+constexpr int SFC_MAX_NZ = MAX_COLUMN_LEVELS;
 
 __device__ __forceinline__ size_t gidx(const GDims& g, int i, int j, int k) {
   return ((size_t)(k + g.ng) * g.NY + (j + g.ng)) * g.NX + (i + g.ng);
@@ -17,10 +18,7 @@ __device__ __forceinline__ size_t gidx(const GDims& g, int i, int j, int k) {
 __device__ __forceinline__ size_t g2(const GDims& g, int i, int j) {
   return (size_t)(j + g.ng) * g.NX + (i + g.ng);
 }
-__device__ __forceinline__ real qsat_of(real p, real T) {
-  real es = (real)610.78 * exp((real)17.269 * (T - (real)273.16) / (T - (real)35.86));
-  return (real)0.622 * es / (p - es);
-}
+using thermo::qsat_tetens;
 
 constexpr real KAPPA = (real)0.4;
 constexpr real SIGMA = (real)5.67e-8;
@@ -101,7 +99,7 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   real Ts = tsk[c2];
   real pis = pi1 + phys::grav * z1 / (phys::cp * thv[0]);
   real ths = Ts / pis;
-  real qs_s = qsat_of(p1, Ts);
+  real qs_s = qsat_tetens(p1, Ts);
   real thvs = ths * ((real)1 + phys::eps61 * (beta * qs_s + ((real)1 - beta) * qvcol[0]));
   real Rib = phys::grav * z1 * (thv[0] - thvs) / (thvs * V1 * V1);
   real a2 = KAPPA / log(z1 / z0);
@@ -297,3 +295,4 @@ void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt,
 }
 
 } // namespace wfe
+

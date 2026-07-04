@@ -1,7 +1,8 @@
-#include "physics/kessler.hpp"
+﻿#include "physics/kessler.hpp"
 
 #include "core/constants.hpp"
 #include "core/cuda_check.hpp"
+#include "core/thermo.hpp"
 
 namespace wfe {
 namespace {
@@ -13,13 +14,8 @@ __device__ __forceinline__ size_t g2(const GDims& g, int i, int j) {
   return (size_t)(j + g.ng) * g.NX + (i + g.ng);
 }
 
-// Tetens doygunluk karisim orani (p [Pa], T [K]).
-__device__ __forceinline__ real qsat_of(real p, real T) {
-  real es = (real)610.78 * exp((real)17.269 * (T - (real)273.16) / (T - (real)35.86));
-  return (real)0.622 * es / (p - es);
-}
-
-constexpr int KES_MAX_NZ = 320;
+using thermo::qsat_tetens;
+constexpr int KES_MAX_NZ = MAX_COLUMN_LEVELS;
 
 // Kolon basina bir thread: sedimentasyon + mikrofizik + doygunluk ayarlamasi.
 __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
@@ -82,7 +78,7 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
     real th = p.thb[c] + thp[c];
     real T = th * pi;
     real pres = phys::p00 * pow(pi, phys::cp / phys::Rd);
-    real qs = qsat_of(pres, T);
+    real qs = qsat_tetens(pres, T);
 
     // otokonversiyon + akresyon (qc -> qr)
     real dqauto = k1 * (qck > qc0 ? qck - qc0 : (real)0);
@@ -107,7 +103,7 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
       thp[c] -= phys::Lv * dqe / (phys::cp * pi);
       th = p.thb[c] + thp[c];
       T = th * pi;
-      qs = qsat_of(pres, T);
+      qs = qsat_tetens(pres, T);
     }
 
     // doygunluk ayarlamasi (tek Newton adimi; qv <-> qc, gizli isi)
@@ -139,3 +135,4 @@ void kessler_step(const GDims& g, const DevProf& p, const DevMetric& m, real dt,
 }
 
 } // namespace wfe
+

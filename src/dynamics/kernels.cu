@@ -1,5 +1,7 @@
 #include "dynamics/kernels.hpp"
 
+#include <cstring>
+
 #include "core/constants.hpp"
 #include "core/cuda_check.hpp"
 #include "dynamics/params.hpp"
@@ -185,6 +187,22 @@ __global__ void k_stage_q(const real* s0, const real* tend, real dt, real* out,
   out[idx] = s0[idx] + dt * tend[idx];
 }
 
+// Alan uzerinde max|f| (patlama/NaN dedektoru icin). Pozitif float'larda
+// int karsilastirmasi IEEE siralamasiyla uyumludur; NaN bitleri her sonlu
+// degerden buyuk oldugundan NaN da "buyuk deger" olarak yakalanir.
+__global__ void k_absmax(const real* f, size_t n, unsigned int* result) {
+  __shared__ unsigned int smax;
+  if (threadIdx.x == 0) smax = 0;
+  __syncthreads();
+  size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    float v = fabsf((float)f[idx]);
+    atomicMax(&smax, __float_as_uint(v));
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) atomicMax(result, smax);
+}
+
 // Davies sinir relaksasyonu: tend += w(i,j) [ (1-tf) lo + tf hi - f ].
 __global__ void k_bdy_relax(GDims g, int imax, int jmax, const real* f, const real* lo,
                             const real* hi, real tf, const real* wgt, real* tend) {
@@ -281,9 +299,9 @@ __global__ void k_tend_v(GDims g, DevProf p, DevMetric m, DynParams dp, DevState
       (-fdiv + V(i, j, k) * dv) / rv - fc * (uavg - uref) + relax;
 }
 
-__global__ void k_tend_w(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
-                         const real* mfx, const real* mfy, const real* mfz,
-                         const real* div, real* tend) {
+__global__ void k_tend_w(GDims g, DevProf p, DevMetric m, DynParams dp, real dt,
+                         DevState s, const real* mfx, const real* mfy,
+                         const real* mfz, const real* div, real* tend) {
   WFE_IJK_GUARD(g.nx, g.ny, 1, g.nz)  // w(0) diagnostik, w(nz)=0
   int kk = k + g.ng;
   auto W = [&](int ii, int jj, int kz) { return s.w[gidx(g, ii, jj, kz)]; };
@@ -312,7 +330,13 @@ __global__ void k_tend_w(GDims g, DevProf p, DevMetric m, DynParams dp, DevState
   real dv = (real)0.5 * (div[gidx(g, i, j, k - 1)] + div[gidx(g, i, j, k)]);
   real rw = p.rhobw[gidx(g, i, j, k)] * m.jac[g2(g, i, j)];
   real relax = -ray_alpha(m.zeta_w[kk], m.zt, dp) * W(i, j, k);
-  tend[gidx(g, i, j, k)] = (-fdiv + W(i, j, k) * dv) / rw + relax;
+  real wk = W(i, j, k);
+  if (dp.w_damping) {
+    // dikey Courant > 1: kosuyu kurtaran yerel sonumleme (WRF w_damping)
+    real cr = fabs(wk) * dt / (m.dzeta_w[kk] * m.jac[g2(g, i, j)]);
+    if (cr > (real)1) relax -= (real)0.3 * (cr - (real)1) * wk / dt;
+  }
+  tend[gidx(g, i, j, k)] = (-fdiv + wk * dv) / rw + relax;
 }
 
 // ---------------------------------------------------------------- difuzyon
@@ -714,16 +738,16 @@ void compute_divergence(const GDims& g, const DevMetric& m, const Field3D& mfx,
 }
 
 void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
-                        const DynParams& dp, const State& s, const Field3D& mfx,
-                        const Field3D& mfy, const Field3D& mfz, const Field3D& div,
-                        State& tend) {
+                        const DynParams& dp, real dt, const State& s,
+                        const Field3D& mfx, const Field3D& mfy, const Field3D& mfz,
+                        const Field3D& div, State& tend) {
   DevState ds = dev_state(s);
   dim3 blk = tile_block();
   k_tend_u<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
                                                  div.d, tend.u.d);
   k_tend_v<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
                                                  div.d, tend.v.d);
-  k_tend_w<<<tile_grid(g.nx, g.ny, g.nz - 1), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d,
+  k_tend_w<<<tile_grid(g.nx, g.ny, g.nz - 1), blk>>>(g, p, m, dp, dt, ds, mfx.d, mfy.d,
                                                      mfz.d, div.d, tend.w.d);
   k_tend_thp<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
                                                    div.d, tend.thp.d);
@@ -786,6 +810,20 @@ void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
   dim3 g2d((g.NX + 31) / 32, (g.NY + 7) / 8);
   k_bc_z_zerograd<<<g2d, b2>>>(g, s.pip.d);
   check_kernel("acoustic_substep");
+}
+
+float field_absmax(const Field3D& f) {
+  static unsigned int* d_res = nullptr;
+  if (!d_res) WFE_CUDA_CHECK(cudaMalloc(&d_res, sizeof(unsigned int)));
+  WFE_CUDA_CHECK(cudaMemset(d_res, 0, sizeof(unsigned int)));
+  int blk = 256;
+  int grd = (int)((f.n + blk - 1) / blk);
+  k_absmax<<<grd, blk>>>(f.d, f.n, d_res);
+  unsigned int bits = 0;
+  WFE_CUDA_CHECK(cudaMemcpy(&bits, d_res, sizeof(unsigned int), cudaMemcpyDeviceToHost));
+  float v;
+  std::memcpy(&v, &bits, sizeof(float));
+  return v;
 }
 
 void bdy_relax(const GDims& g, const State& s, const Field3D lo[5], const Field3D hi[5],

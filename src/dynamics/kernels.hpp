@@ -25,9 +25,9 @@ void compute_divergence(const GDims& g, const DevMetric& m, const Field3D& mfx,
 // YAVAS egilimler: adveksiyon (kutle akilariyla) + difuzyon + Coriolis +
 // Rayleigh. Hizli terimler akustik alt-adimlarda.
 void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
-                        const DynParams& dp, const State& s, const Field3D& mfx,
-                        const Field3D& mfy, const Field3D& mfz, const Field3D& div,
-                        State& tend);
+                        const DynParams& dp, real dt, const State& s,
+                        const Field3D& mfx, const Field3D& mfy, const Field3D& mfz,
+                        const Field3D& div, State& tend);
 
 // Bir akustik alt-adim: u,v yatay explicit (capraz-terimli PGF); w,pi'
 // dikey implicit; theta' stratifikasyon; yuzey w'si diagnostik.
@@ -43,5 +43,9 @@ void update_moisture_stage(const State& s0, const State& tend, real dt, State& o
 // Davies sinir relaksasyonu (u,v,thp,pip,qv): yavas egilimlere nudge ekler.
 void bdy_relax(const GDims& g, const State& s, const Field3D lo[5], const Field3D hi[5],
                real tf, const Field3D& wgt, State& tend);
+
+// Alan uzerinde max|f| (GPU reduce). NaN'lar cok buyuk deger olarak doner —
+// patlama/NaN bekcisi icin ucuz kontrol.
+float field_absmax(const Field3D& f);
 
 } // namespace wfe

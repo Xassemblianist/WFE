@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include "core/metric.hpp"
 #include "dynamics/boundary.hpp"
 #include "dynamics/integrator.hpp"
+#include "dynamics/kernels.hpp"
 #include "io/input.hpp"
 #include "io/writer.hpp"
 #include "physics/surface.hpp"
@@ -210,6 +212,21 @@ int main(int argc, char** argv) {
   dp.bc_x_open = cfg.get_str("bc_x", "periodic") == "open";
   dp.bc_y_open = cfg.get_str("bc_y", "periodic") == "open";
   dp.cstar = cfg.get_real("cstar", 30);
+  dp.w_damping = cfg.get_str("w_damping", "off") == "on";
+  dp.w_abort = cfg.get_real("w_abort", 150);
+
+  // akustik CFL kontrolu: en hizli ses dalgasi yatay alt-adimi sinirlar
+  {
+    real cs = 350;  // tipik maksimum ses hizi [m/s]
+    real dtau = dt / std::max(1, dp.acoustic_ns);
+    real lim = (real)0.5 * std::min(dx, dy) / cs;
+    if (dtau > lim)
+      std::fprintf(stderr,
+                   "UYARI: akustik alt-adim %.2fs > guvenli sinir %.2fs "
+                   "(dt<=%.1fs veya acoustic_ns>=%d onerilir)\n",
+                   (double)dtau, (double)lim, (double)(lim * dp.acoustic_ns),
+                   (int)std::ceil(dt / lim));
+  }
 
   bool file_mode = cfg.get_str("profile", "isentropic") == "file";
   InputData input;
@@ -272,6 +289,26 @@ int main(int argc, char** argv) {
   }
   writer.write(integ.state(), 0, 0);
 
+  // provenans: surum, git hash, hassasiyet, config ekosu
+  {
+    std::string p = out_dir + "/run_info.txt";
+    FILE* f = std::fopen(p.c_str(), "w");
+    if (f) {
+      std::fprintf(f, "wfe_version = 0.5.0\ngit = %s\nprecision = %s\ngpu = %s\n\n",
+#ifdef WFE_GIT_HASH
+                   WFE_GIT_HASH,
+#else
+                   "unknown",
+#endif
+                   sizeof(real) == 4 ? "fp32" : "fp64", prop.name);
+      for (const auto& [k, v] : cfg.raw()) std::fprintf(f, "%s = %s\n", k.c_str(), v.c_str());
+      std::fclose(f);
+    }
+  }
+  for (const auto& k : cfg.unused())
+    std::fprintf(stderr, "UYARI: config anahtari hic okunmadi (yazim hatasi?): %s\n",
+                 k.c_str());
+
   std::vector<real> diag_buf(g.npts());
   int nsteps = (int)std::ceil(t_end / dt);
   int diag_steps = std::max(1, (int)std::round(diag_every / dt));
@@ -282,6 +319,17 @@ int main(int argc, char** argv) {
     integ.step(dt, (step - 1) * dt);
     real t = step * dt;
 
+    if (step % 10 == 0) {  // ucuz patlama/NaN bekcisi (GPU reduce)
+      float wm = field_absmax(integ.state().w);
+      if (!std::isfinite(wm) || wm > (float)dp.w_abort) {
+        std::fprintf(stderr,
+                     "HATA: |w|max=%.1f m/s esigi asti (adim %d, t=%.0fs) — "
+                     "acil cikti yazilip durduruluyor\n",
+                     wm, step, (double)t);
+        writer.write(integ.state(), step, t);
+        return 3;
+      }
+    }
     if (step % diag_steps == 0 || step == nsteps) {
       WFE_CUDA_CHECK(cudaDeviceSynchronize());
       Diag d = diagnose(g, integ.state(), diag_buf, dp.moisture);

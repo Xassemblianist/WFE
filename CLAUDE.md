@@ -26,6 +26,12 @@ Operasyonel gerçek tahmin (tek komut): `python tools\run_forecast.py cases\turk
 (gereken pip paketleri: numpy matplotlib eccodes cartopy netCDF4 xarray; Python
 `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`). Doğrulama: `tools\verify.py`.
 
+## Test
+
+Her anlamlı değişiklikten sonra: `python tools\run_tests.py` (6 doğrulama
+vakası, sayısal kapılar, ~90 s; çıkış kodu 0 = PASS). CUDA hata ayıklama:
+`WFE_SYNC=1` ile koş.
+
 ## Kod kuralları
 
 - `real` tipi (`src/core/precision.hpp`) her yerde kullanılır; kernel içinde çıplak `double` sabiti yazma (FP32'de gizli dönüşüm maliyeti).

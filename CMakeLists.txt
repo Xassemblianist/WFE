@@ -12,6 +12,14 @@ endif()
 
 option(WFE_DOUBLE "Build with double precision (real = double)" OFF)
 
+execute_process(COMMAND git rev-parse --short HEAD
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE WFE_GIT_HASH
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT WFE_GIT_HASH)
+  set(WFE_GIT_HASH "unknown")
+endif()
+
 find_package(CUDAToolkit REQUIRED)
 
 add_executable(wfe
@@ -34,6 +42,7 @@ target_link_libraries(wfe PRIVATE CUDA::cudart)
 if(WFE_DOUBLE)
   target_compile_definitions(wfe PRIVATE WFE_DOUBLE)
 endif()
+target_compile_definitions(wfe PRIVATE WFE_GIT_HASH="${WFE_GIT_HASH}")
 
 if(MSVC)
   target_compile_options(wfe PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W3>)

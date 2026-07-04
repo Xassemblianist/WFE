@@ -31,18 +31,31 @@ bool Config::load(const std::string& path) {
 }
 
 real Config::get_real(const std::string& key, real def) const {
+  used_.insert(key);
   auto it = kv_.find(key);
   return it == kv_.end() ? def : (real)std::atof(it->second.c_str());
 }
 
 int Config::get_int(const std::string& key, int def) const {
+  used_.insert(key);
   auto it = kv_.find(key);
   return it == kv_.end() ? def : std::atoi(it->second.c_str());
 }
 
 std::string Config::get_str(const std::string& key, const std::string& def) const {
+  used_.insert(key);
   auto it = kv_.find(key);
   return it == kv_.end() ? def : it->second;
+}
+
+std::vector<std::string> Config::unused() const {
+  std::vector<std::string> out;
+  for (const auto& [k, v] : kv_) {
+    if (used_.count(k)) continue;
+    if (k.rfind("proj_", 0) == 0) continue;  // yalniz prep_gfs.py okur
+    out.push_back(k);
+  }
+  return out;
 }
 
 } // namespace wfe

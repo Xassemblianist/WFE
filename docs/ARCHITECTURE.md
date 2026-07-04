@@ -51,6 +51,24 @@ kernel'leri şimdilik "naif" (shared memory yok); kolon çözücü yerel diziler
 6. `Writer::write`'a satır + meta.json vars listesi
 7. Görselleştirme: tools/plot_slice.py otomatik çalışır (meta.json'dan okur)
 
+## Sağlamlık altyapısı
+
+- **Test süiti:** `python tools/run_tests.py` — 6 doğrulama vakası, sayısal
+  kapılarla (~90 s). Her anlamlı değişiklikten sonra koşulmalı.
+- **Çalışma-zamanı korumaları:** başlangıçta akustik CFL kontrolü (dt önerisiyle
+  uyarı); her 10 adımda GPU max|w| bekçisi (NaN/patlamada acil çıktı + kod 3);
+  opsiyonel `w_damping = on` (dikey Courant > 1'de WRF-tarzı yerel sönüm —
+  gerçek veri koşularında açık).
+- **Config doğrulama:** hiç okunmamış anahtarlar uyarı üretir (yazım hatası
+  yakalar; prep'e ait `proj_*` hariç).
+- **Provenans:** her koşu `out_dir/run_info.txt` yazar (sürüm, git hash,
+  hassasiyet, GPU, tam config ekosu).
+- **Hata ayıklama:** `WFE_SYNC=1` ortam değişkeni her kernel'den sonra
+  senkronize eder — asenkron CUDA hataları tam yerinde yakalanır.
+- **FP64:** `-DWFE_DOUBLE=ON` derlenir ve warm bubble FP32 ile 3 ondalık
+  aynı sonucu verir (hassasiyet politikası doğrulaması).
+- Ortak yardımcılar: `core/thermo.hpp` (qsat), `MAX_COLUMN_LEVELS` (grid.hpp).
+
 ## Bilinen bilinçli borçlar
 
 - Difüzyon Laplasyeni arazi çapraz terimlerini ihmal eder (düz gridde tam;
