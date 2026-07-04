@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "dynamics/kernels.hpp"
+#include "physics/kessler.hpp"
 
 namespace wfe {
 
@@ -27,6 +28,7 @@ void Integrator::init(const GDims& g, const DevProf& prof, const DevMetric& m,
   mfx_.alloc(n);
   mfy_.alloc(n);
   mfz_.alloc(n);
+  rain_.alloc((size_t)g.NX * g.NY);
 }
 
 void Integrator::step(real dt) {
@@ -46,9 +48,11 @@ void Integrator::step(real dt) {
     real dtau = stage_dt[m] / ns_stage[m];
     for (int t = 0; t < ns_stage[m]; ++t)
       acoustic_substep(g_, prof_, m_, dp_, dtau, s_work_, tend_, piprev_);
+    if (dp_.moisture) update_moisture_stage(s_n_, tend_, stage_dt[m], s_work_);
     s_stage_.swap(s_work_);
   }
   s_n_.swap(s_stage_);
+  if (dp_.moisture) kessler_step(g_, prof_, m_, dt, s_n_, rain_);
 }
 
 } // namespace wfe

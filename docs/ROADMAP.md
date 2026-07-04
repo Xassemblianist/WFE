@@ -19,11 +19,17 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [x] Doğrulama: Straka yoğunluk akıntısı, Schär dağ dalgası, arazide durağanlık,
       Galilean değişmezlik, split-explicit/explicit regresyonu (docs/EQUATIONS.md tablosu)
 
-## Faz 2 — Nem ve mikrofizik
+## Faz 2 — Nem ve mikrofizik ✅ (2026-07-04, buz mikrofiziği hariç)
 
-- [ ] Nem değişkenleri (qv, qc, qr) + yoğunluk sıcaklığı θ_ρ ile kaldırma
-- [ ] Kessler warm-rain mikrofiziği → sonra WSM6 sınıfı buz mikrofiziği
-- [ ] Doğrulama: Bryan-Fritsch nemli benchmark, süperhücre simülasyonu
+- [x] Nem değişkenleri (qv, qc, qr), nemli kaldırma g(θ'/θ̄+0.61qv'−qc−qr), θ̄v
+      ile tutarlı hidrostatik taban ve PGF
+- [x] Kessler warm-rain mikrofiziği (doygunluk ayarı, otokonv., akresyon,
+      buharlaşma, sedimentasyon, yüzey yağış birikimi)
+- [x] WK82 sounding (nem + tanh rüzgâr kesmesi)
+- [x] Doğrulama: WK82 süperhücre — fırtına bölünmesi (ayna-simetrik sağ/sol
+      hareketli), w_max 40-48 m/s, yağış şeritleri; kuru regresyonlar birebir
+- [ ] WSM6 sınıfı buz mikrofiziği (kar/graupel; kış yağışları için — Faz 4 ile)
+- [ ] Pozitif-tanımlı nem adveksiyonu (5. mertebe şemanın alt-aşımlarını keser)
 
 ## Faz 3 — Gerçek veri: WPS muadili
 

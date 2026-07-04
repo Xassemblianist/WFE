@@ -1,6 +1,6 @@
 # Yönetici denklemler ve ayrıklaştırma
 
-## Denklem seti (Faz 1: kuru, arazi-takip eden koordinat)
+## Denklem seti (Faz 2: nemli, arazi-takip eden koordinat)
 
 Tam sıkıştırılabilir, non-hidrostatik Euler denklemleri, Klemp–Wilhelmson (1978)
 pertürbasyon formülasyonu. Taban durumu fiziksel z'de yatay-homojen ve hidrostatik
@@ -22,9 +22,18 @@ ADV(q) = (1/ρ̃)[∇·(MF q) - q ∇·MF],  ρ̃ = ρ̄J,  MF = (ρ̃u, ρ̃v, 
 α(ζ): üst Rayleigh sönümleme profili (sin², `rayleigh_zd` üstünde); f: f-plane Coriolis
 (pertürbasyon formu). İsteğe bağlı sabit-K difüzyon idealize testler için.
 
+**Nem (Faz 2):** qv, qc, qr tam alan prognostikleri (adveksiyon + Kessler
+mikrofiziği). Kaldırma: `B = g[θ'/θ̄ + 0.61(qv−q̄v) − qc − qr]` (KW78 nemli form).
+Hidrostatik taban ve PGF/süreklilik katsayıları sanal potansiyel sıcaklık
+`θ̄v = θ̄(1+0.61 q̄v)` ile kurulur (q̄v−π̄ iteratif dengeleme). Mikrofizik zaman
+adımı sonunda operatör bölmesiyle: sedimentasyon (kolon upwind, CFL alt-adımlı,
+Vr=36.34(ρqr)^0.1364·√(ρ0/ρ)) → otokonversiyon/akresyon → yağmur buharlaşması →
+doygunluk ayarlaması (Tetens, tek Newton adımı, gizli ısı → θ').
+
 **Bilinçli yaklaşımlar:**
-- π' adveksiyonu ihmal (KW78 standardı).
-- Kuru model: kaldırmada nem yok (Faz 2'de θ_ρ).
+- π' adveksiyonu ihmal (KW78 standardı); π' denkleminde nem kaynak terimi yok.
+- cp, Rd kuru hava değerleri (nem düzeltmesi θ̄v üzerinden).
+- Nem adveksiyonu pozitif-tanımlı değil (negatifler mikrofizikte kırpılır).
 - Pertürbasyon formu sayesinde durağan atmosfer arazi üstünde TAM korunur
   (schaer_rest testi: |w| = 0.0, makine kesinliğinde).
 
@@ -55,3 +64,4 @@ ADV(q) = (1/ρ̃)[∇·(MF q) - q ∇·MF],  ρ̃ = ρ̄J,  MF = (ρ̃u, ρ̃v, 
 | Galilean değişmezlik (bubble_outflow.ini) | 20 m/s ortam akışında w evrimi durağan durumla aynı; sınırdan yansımasız çıkış | — |
 | Durağanlık arazide (schaer_rest.ini) | 1 saat: |w|=0.000, θ'=0 (tam) | analitik |
 | Schär dağ dalgası (schaer.ini) | küçük ölçek evanescent, büyük ölçek yukarı yayılan eğik faz; w_max≈1.5-1.9 m/s | Schär 2002 |
+| WK82 süperhücre (wk82_supercell.ini) | fırtına bölünmesi (ayna-simetrik çift), w_max 40-48 m/s, çift yağış şeridi, stratosferik taşan tepeler | Weisman-Klemp 1982 |

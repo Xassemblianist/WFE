@@ -31,8 +31,13 @@ void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
 
 // Bir akustik alt-adim: u,v yatay explicit (capraz-terimli PGF); w,pi'
 // dikey implicit; theta' stratifikasyon; yuzey w'si diagnostik.
+// Nemli kaldirma acoustic dongude asama-sabit qv/qc/qr ile hesaplanir.
 void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
                       const DynParams& dp, real dtau, State& s, const State& tend,
                       Field3D& piprev);
+
+// Nem skalarlarinin asama guncellemesi: out.q = s0.q + dt * tend.q
+// (hizli terimleri olmadigindan akustik donguye girmezler).
+void update_moisture_stage(const State& s0, const State& tend, real dt, State& out);
 
 } // namespace wfe

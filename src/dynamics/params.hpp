@@ -16,6 +16,7 @@ struct DynParams {
   bool bc_x_open = false;   // x siniri: false=periyodik, true=acik/radyasyon
   bool bc_y_open = false;
   real cstar = 30;          // radyasyon BC faz hizi [m s-1] (Klemp-Wilhelmson)
+  bool moisture = false;    // qv/qc/qr prognostikleri + Kessler mikrofizigi
 };
 
 } // namespace wfe

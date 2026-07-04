@@ -47,6 +47,16 @@ void init_bubble(const GDims& g, const Config& cfg, const Metric& metric, State&
   s.thp.upload(h.data());
 }
 
+// Baslangic nemi: qv = taban profili q̄v.
+void init_moisture(const GDims& g, const BaseState& base, State& s) {
+  if (!base.has_moisture()) return;
+  std::vector<real> h(g.npts(), 0);
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) h[g.idx(i, j, k)] = base.qvb_at(g, i, j, k);
+  s.qv.upload(h.data());
+}
+
 // Baslangic ruzgari = taban ruzgar profili (u yuzleri 0..nx dahil).
 void init_wind(const GDims& g, const BaseState& base, State& s) {
   std::vector<real> h(g.npts(), 0);
@@ -60,12 +70,12 @@ void init_wind(const GDims& g, const BaseState& base, State& s) {
 }
 
 struct Diag {
-  real wmax, thmin, thmax, pipmax;
+  real wmax, thmin, thmax, pipmax, qcmax, qrmax;
   bool finite;
 };
 
-Diag diagnose(const GDims& g, const State& s, std::vector<real>& buf) {
-  Diag d{0, 0, 0, 0, true};
+Diag diagnose(const GDims& g, const State& s, std::vector<real>& buf, bool moist) {
+  Diag d{0, 0, 0, 0, 0, 0, true};
   s.w.download(buf.data());
   for (int k = 0; k <= g.nz; ++k)
     for (int j = 0; j < g.ny; ++j)
@@ -91,6 +101,16 @@ Diag diagnose(const GDims& g, const State& s, std::vector<real>& buf) {
         if (!std::isfinite(v)) d.finite = false;
         if (v > d.pipmax) d.pipmax = v;
       }
+  if (moist) {
+    s.qc.download(buf.data());
+    for (size_t c = 0; c < buf.size(); ++c)
+      if (buf[c] > d.qcmax) d.qcmax = buf[c];
+    s.qr.download(buf.data());
+    for (size_t c = 0; c < buf.size(); ++c) {
+      if (!std::isfinite(buf[c])) d.finite = false;
+      if (buf[c] > d.qrmax) d.qrmax = buf[c];
+    }
+  }
   return d;
 }
 
@@ -147,14 +167,16 @@ int main(int argc, char** argv) {
 
   BaseState base;
   base.build(g, cfg, metric);
+  dp.moisture = base.has_moisture();
 
   Integrator integ;
   integ.init(g, base.dev(), metric.dev(), dp);
   init_bubble(g, cfg, metric, integ.state());
   init_wind(g, base, integ.state());
+  init_moisture(g, base, integ.state());
 
   Writer writer;
-  writer.init(g, out_dir, dt);
+  writer.init(g, out_dir, dt, dp.moisture);
   {  // hucre merkezi fiziksel yukseklikleri (gorselleştirme icin)
     std::vector<float> zc((size_t)g.nx * g.ny * g.nz);
     size_t o = 0;
@@ -178,10 +200,16 @@ int main(int argc, char** argv) {
 
     if (step % diag_steps == 0 || step == nsteps) {
       WFE_CUDA_CHECK(cudaDeviceSynchronize());
-      Diag d = diagnose(g, integ.state(), diag_buf);
-      std::printf("adim %6d  t=%7.1fs  |w|max=%7.3f  th'=[%+.3f,%+.3f]K  |pi'|max=%.2e\n",
-                  step, (double)t, (double)d.wmax, (double)d.thmin, (double)d.thmax,
-                  (double)d.pipmax);
+      Diag d = diagnose(g, integ.state(), diag_buf, dp.moisture);
+      if (dp.moisture)
+        std::printf("adim %6d  t=%7.1fs  |w|max=%7.3f  th'=[%+.2f,%+.2f]K  "
+                    "qc=%.2fg/kg qr=%.2fg/kg\n",
+                    step, (double)t, (double)d.wmax, (double)d.thmin, (double)d.thmax,
+                    (double)d.qcmax * 1000, (double)d.qrmax * 1000);
+      else
+        std::printf("adim %6d  t=%7.1fs  |w|max=%7.3f  th'=[%+.3f,%+.3f]K  |pi'|max=%.2e\n",
+                    step, (double)t, (double)d.wmax, (double)d.thmin, (double)d.thmax,
+                    (double)d.pipmax);
       if (!d.finite) {
         std::fprintf(stderr, "HATA: NaN/Inf tespit edildi, simulasyon durduruldu.\n");
         return 2;
@@ -189,6 +217,7 @@ int main(int argc, char** argv) {
     }
     if (step % out_steps == 0 || step == nsteps) {
       writer.write(integ.state(), step, t);
+      if (dp.moisture) writer.write_rain(integ.rain(), step);
     }
   }
   WFE_CUDA_CHECK(cudaDeviceSynchronize());

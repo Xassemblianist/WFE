@@ -4,7 +4,12 @@ Sıfırdan C++20/CUDA ile yazılan **bölgesel sayısal hava tahmin modeli**. Uz
 WRF'nin yerini alan, GPU-yerlisi, NOAA GFS verisiyle gerçek tarih-saatli operasyonel tahmin
 üreten tam bir sistem.
 
-## Mevcut durum (Faz 1 tamamlandı)
+## Mevcut durum (Faz 2 tamamlandı)
+
+- **Nemli dinamik + Kessler mikrofiziği**: qv/qc/qr prognostikleri, gizli ısı,
+  yağmur sedimentasyonu ve yüzey yağış birikimi → WK82 süperhücre testinde
+  fırtına bölünmesi (w_max ~45 m/s, 2 saatlik fırtına, gerçek zamandan 457× hızlı)
+
 
 - 3B, tam sıkıştırılabilir, **non-hidrostatik dinamik çekirdek** (Klemp–Wilhelmson denklem seti)
 - Arakawa C-grid, 5. mertebe upwind adveksiyon, WS2002 RK3 + **split-explicit akustik

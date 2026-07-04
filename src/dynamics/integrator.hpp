@@ -19,6 +19,7 @@ class Integrator {
   void step(real dt);
 
   State& state() { return s_n_; }
+  const Field3D& rain() const { return rain_; }  // 2D birikmis yagis [mm]
 
  private:
   GDims g_{};
@@ -26,7 +27,7 @@ class Integrator {
   DevMetric m_{};
   DynParams dp_{};
   State s_n_, s_stage_, s_work_, tend_;
-  Field3D div_, piprev_, mfx_, mfy_, mfz_;
+  Field3D div_, piprev_, mfx_, mfy_, mfz_, rain_;
 };
 
 } // namespace wfe
