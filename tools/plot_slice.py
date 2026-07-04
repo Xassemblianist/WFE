@@ -33,14 +33,24 @@ def main():
     a, meta = load(args.outdir, args.var, args.step)
     jmid = meta["ny"] // 2
     sl = a[:, jmid, :]
+    is_w = sl.shape[0] > meta["nz"]
+    if is_w:  # w seviyelerini merkezlere ortala
+        sl = 0.5 * (sl[:-1, :] + sl[1:, :])
 
     x = (np.arange(meta["nx"]) + 0.5) * meta["dx"] / 1000.0
-    z = (np.arange(sl.shape[0]) + (0.0 if sl.shape[0] > meta["nz"] else 0.5)) * meta["dz"] / 1000.0
+    zc_path = args.outdir / "zc.bin"
+    if zc_path.exists():  # arazi-takip eden grid: fiziksel yukseklik
+        zc = np.fromfile(zc_path, dtype=np.float32).reshape(meta["nz"], meta["ny"], meta["nx"])
+        Z = zc[:, jmid, :] / 1000.0
+        X = np.tile(x, (meta["nz"], 1))
+    else:
+        z = (np.arange(meta["nz"]) + 0.5) * meta["dz"] / 1000.0
+        X, Z = np.meshgrid(x, z)
 
     t = args.step * meta["dt"]
     fig, ax = plt.subplots(figsize=(9, 5))
     vmax = max(abs(sl.min()), abs(sl.max()), 1e-12)
-    im = ax.pcolormesh(x, z, sl, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
+    im = ax.pcolormesh(X, Z, sl, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto")
     fig.colorbar(im, ax=ax, label=args.var)
     ax.set_xlabel("x [km]")
     ax.set_ylabel("z [km]")

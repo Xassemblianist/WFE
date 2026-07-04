@@ -10,16 +10,18 @@
 #include "core/config.hpp"
 #include "core/cuda_check.hpp"
 #include "core/grid.hpp"
+#include "core/metric.hpp"
 #include "dynamics/integrator.hpp"
 #include "io/writer.hpp"
 
 namespace wfe {
 namespace {
 
-// Klasik sicak kabarcik testi: hidrostatik dengedeki izentropik atmosfere
-// cos^2 profilli theta' pertubasyonu (Wicker & Skamarock 1998 benzeri).
-void init_warm_bubble(const GDims& g, const Config& cfg, State& s) {
-  real dth = cfg.get_real("bubble_dtheta", (real)2);
+// cos^2 profilli theta' kabarcigi (sicak: WK98; soguk: Straka yogunluk akintisi).
+// bubble_dtheta = 0 ise atlanir. Yukseklik fiziksel z ile olculur.
+void init_bubble(const GDims& g, const Config& cfg, const Metric& metric, State& s) {
+  real dth = cfg.get_real("bubble_dtheta", (real)0);
+  if (dth == (real)0) return;
   real xc = cfg.get_real("bubble_xc", g.nx * g.dx / 2);
   real yc = cfg.get_real("bubble_yc", g.ny * g.dy / 2);
   real zc = cfg.get_real("bubble_zc", (real)2000);
@@ -34,7 +36,7 @@ void init_warm_bubble(const GDims& g, const Config& cfg, State& s) {
       for (int i = 0; i < g.nx; ++i) {
         real x = ((real)i + (real)0.5) * g.dx;
         real y = ((real)j + (real)0.5) * g.dy;
-        real z = ((real)k + (real)0.5) * g.dz;
+        real z = metric.z_at(g, i, j, metric.h_zeta_c[k + g.ng]);
         real rx = (x - xc) / xr, ry = (y - yc) / yr, rz = (z - zc) / zr;
         real r = std::sqrt(rx * rx + ry * ry + rz * rz);
         if (r < (real)1) {
@@ -43,6 +45,18 @@ void init_warm_bubble(const GDims& g, const Config& cfg, State& s) {
         }
       }
   s.thp.upload(h.data());
+}
+
+// Baslangic ruzgari = taban ruzgar profili (u yuzleri 0..nx dahil).
+void init_wind(const GDims& g, const BaseState& base, State& s) {
+  std::vector<real> h(g.npts(), 0);
+  for (int k = 0; k < g.nz; ++k) {
+    real ub = base.h_ub[k + g.ng];
+    if (ub == (real)0) continue;
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i <= g.nx; ++i) h[g.idx(i, j, k)] = ub;
+  }
+  s.u.upload(h.data());
 }
 
 struct Diag {
@@ -101,7 +115,6 @@ int main(int argc, char** argv) {
   real dz = cfg.get_real("dz", 200);
   real dt = cfg.get_real("dt", (real)0.25);
   real t_end = cfg.get_real("t_end", 1000);
-  real theta0 = cfg.get_real("theta0", 300);
   real out_every = cfg.get_real("out_interval", 100);
   real diag_every = cfg.get_real("diag_interval", 10);
   std::string out_dir = cfg.get_str("out_dir", "out/warm_bubble");
@@ -117,15 +130,40 @@ int main(int argc, char** argv) {
               16.0 * g.npts() * sizeof(real) / 1e6, g.npts(),
               sizeof(real) == 4 ? "FP32" : "FP64");
 
+  DynParams dp;
+  dp.diff_K = cfg.get_real("diff_K", 0);
+  dp.coriolis_f = cfg.get_real("coriolis_f", 0);
+  dp.rayleigh_zd = cfg.get_real("rayleigh_zd", -1);
+  dp.rayleigh_alpha = cfg.get_real("rayleigh_alpha", 0);
+  dp.acoustic_ns = cfg.get_int("acoustic_ns", 6);
+  dp.acoustic_beta = cfg.get_real("acoustic_beta", (real)0.2);
+  dp.acoustic_smdiv = cfg.get_real("acoustic_smdiv", (real)0.1);
+  dp.bc_x_open = cfg.get_str("bc_x", "periodic") == "open";
+  dp.bc_y_open = cfg.get_str("bc_y", "periodic") == "open";
+  dp.cstar = cfg.get_real("cstar", 30);
+
+  Metric metric;
+  metric.build(g, cfg);
+
   BaseState base;
-  base.build(g, theta0);
+  base.build(g, cfg, metric);
 
   Integrator integ;
-  integ.init(g, base.dev());
-  init_warm_bubble(g, cfg, integ.state());
+  integ.init(g, base.dev(), metric.dev(), dp);
+  init_bubble(g, cfg, metric, integ.state());
+  init_wind(g, base, integ.state());
 
   Writer writer;
   writer.init(g, out_dir, dt);
+  {  // hucre merkezi fiziksel yukseklikleri (gorselleştirme icin)
+    std::vector<float> zc((size_t)g.nx * g.ny * g.nz);
+    size_t o = 0;
+    for (int k = 0; k < g.nz; ++k)
+      for (int j = 0; j < g.ny; ++j)
+        for (int i = 0; i < g.nx; ++i)
+          zc[o++] = (float)metric.z_at(g, i, j, metric.h_zeta_c[k + g.ng]);
+    writer.write_static("zc", zc);
+  }
   writer.write(integ.state(), 0, 0);
 
   std::vector<real> diag_buf(g.npts());

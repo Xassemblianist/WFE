@@ -18,6 +18,7 @@ add_executable(wfe
   src/main.cpp
   src/core/config.cpp
   src/core/base_state.cpp
+  src/core/metric.cpp
   src/dynamics/integrator.cpp
   src/dynamics/kernels.cu
   src/io/writer.cpp

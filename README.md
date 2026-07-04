@@ -4,12 +4,16 @@ Sıfırdan C++20/CUDA ile yazılan **bölgesel sayısal hava tahmin modeli**. Uz
 WRF'nin yerini alan, GPU-yerlisi, NOAA GFS verisiyle gerçek tarih-saatli operasyonel tahmin
 üreten tam bir sistem.
 
-## Mevcut durum (Faz 0 tamamlandı)
+## Mevcut durum (Faz 1 tamamlandı)
 
 - 3B, tam sıkıştırılabilir, **non-hidrostatik dinamik çekirdek** (Klemp–Wilhelmson denklem seti)
-- Arakawa C-grid, 5. mertebe upwind adveksiyon, Wicker–Skamarock RK3 zaman entegrasyonu
-- Tamamı GPU'da (CUDA), FP32; RTX 2060'ta 100×100×50 grid gerçek zamandan ~107× hızlı
-- Doğrulama: klasik yükselen sıcak kabarcık testi → literatürle uyumlu mantar termali
+- Arakawa C-grid, 5. mertebe upwind adveksiyon, WS2002 RK3 + **split-explicit akustik
+  alt-adımlama** (dikey implicit tridiagonal çözücü) → zaman adımı adveksiyon-CFL'li
+- **Gal-Chen arazi-takip eden koordinat** (gerilebilir dikey grid), Coriolis, Rayleigh
+  üst katmanı, açık/radyasyon yanal sınırlar, sabit-N stratifiye taban durumu
+- Tamamı GPU'da (CUDA), FP32; RTX 2060'ta Schär testi gerçek zamandan ~690× hızlı
+- Doğrulama süiti: sıcak kabarcık, Straka yoğunluk akıntısı, Schär dağ dalgası,
+  arazide durağanlık, Galilean değişmezlik (sonuçlar: docs/EQUATIONS.md)
 
 Ayrıntılar: [docs/EQUATIONS.md](docs/EQUATIONS.md) (denklem seti ve ayrıklaştırma),
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (kod mimarisi),

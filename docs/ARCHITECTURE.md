@@ -16,21 +16,30 @@
 - **Ghost doldurma sırası:** dikey → x periyodik (tüm j,k) → y periyodik (x ghost'ları
   dahil tüm i). Köşe tutarlılığı bu sıraya bağlıdır; değiştirme.
 
-## Veri akışı (bir zaman adımı)
+## Veri akışı (bir zaman adımı, split-explicit)
 
 ```
 Integrator::step(dt)                          [src/dynamics/integrator.cpp]
-  3 RK3 aşaması için:
-    apply_bcs(cur)                            ghost'lar güncellenir
-    compute_divergence(cur) -> div            ρ̄V diverjansı (merkezlerde)
-    compute_tendencies(cur, div) -> tend      5 kernel: u,v,w,thp,pip
-    update_state: s_stage = s_n + dt_rk*tend  tend ghost'ları hep 0 => ghost'lar s_n'den kopyalanır
-  s_n <-> s_stage (pointer swap)
+  3 RK3 aşaması (m=0,1,2; süreler dt/3, dt/2, dt) için:
+    est = (m==0 ? s_n : s_stage)              yavaş egilimlerin kaynağı
+    apply_bcs(est)
+    compute_mass_fluxes(est) -> mfx,mfy,mfz   ρ̄J ağırlıklı, kontravariant dikey
+    compute_divergence -> div
+    compute_tendencies(est, mf, div) -> tend  YAVAŞ: adveksiyon+difüzyon+Coriolis+Rayleigh
+    s_work = kopya(s_n)                       hızlı sistem zaman-n'den başlar
+    ns_m = {1, ns/2, ns} kez acoustic_substep(s_work, tend):
+      k_acou_uv    u,v yatay explicit (π* diverjans sönümlemeli, arazi çapraz terimi)
+      radyasyon/ghost BC'leri (u,v)
+      k_acou_wpi   kolon başına thread: w-π' tridiagonal (Thomas), θ', yüzey w'si
+      π' ghost'ları
+    s_stage <-> s_work
+  s_n <-> s_stage
 ```
 
-Tendency kernel'leri şimdilik "naif" (her thread kendi 6 akısını üst üste hesaplar,
-shared memory yok). RTX 2060'ta 500k hücre 4000 adım / 9.3 s — optimizasyon Faz 6'nın
-işi; önce doğruluk ve kapsam.
+Metrik terimler `DevMetric` (src/core/metric.hpp) ile taşınır; taban durumu
+arazi-takip eden gridde 3B'dir (`DevProf`, src/core/base_state.hpp). Tendency
+kernel'leri şimdilik "naif" (shared memory yok); kolon çözücü yerel dizilerle
+(nz ≤ 319). Optimizasyon Faz 6'nın işi; önce doğruluk ve kapsam.
 
 ## Yeni prognostik değişken ekleme kontrol listesi
 
@@ -42,10 +51,12 @@ işi; önce doğruluk ve kapsam.
 6. `Writer::write`'a satır + meta.json vars listesi
 7. Görselleştirme: tools/plot_slice.py otomatik çalışır (meta.json'dan okur)
 
-## Faz 1'de değişecekler (bilinçli borç)
+## Bilinen bilinçli borçlar
 
-- Split-explicit akustik alt-adımlama: `compute_tendencies` yavaş/hızlı terimlere
-  ayrılacak, dikey implicit tridiagonal çözücü (thread=kolon) eklenecek.
-- Arazi-takip eden koordinat: `GDims`e metrik terimler (dz/dx haritaları), taban
-  durumu 3B'leşecek (sadece dikey profil olmaktan çıkar).
-- Açık yanal sınırlar: apply_bcs'e Klemp-Lilly radyasyon BC varyantı.
+- Difüzyon Laplasyeni arazi çapraz terimlerini ihmal eder (düz gridde tam;
+  arazili gerçek durumlarda fizik kapanımı Faz 4'te bunu değiştirecek).
+- Rayleigh katmanı ζ~z varsayar (katman düz tepeye yakın olduğundan iyi yaklaşım).
+- Kolon çözücü yerel dizileri local memory'ye taşar; Faz 6'da shared memory /
+  register blocking ile optimize edilecek.
+- Açık sınırda skalar ghost'lar sıfır-gradyan (Faz 3'te GFS'ten zamana bağlı
+  sınır beslemesi + relaxation zone gelince yenilenecek).

@@ -10,13 +10,14 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       5. mertebe upwind adveksiyon (tamamen explicit)
 - [x] Sıcak kabarcık doğrulaması + binary çıktı + Python görselleştirme
 
-## Faz 1 — Gerçek çekirdek yetenekleri
+## Faz 1 — Gerçek çekirdek yetenekleri ✅ (2026-07-04)
 
-- [ ] Split-explicit akustik alt-adımlama (yatay explicit, dikey implicit) → dt ~6-8×
-- [ ] Arazi-takip eden dikey koordinat (Gal-Chen) + gerilmiş dikey grid
-- [ ] Açık/radyasyon yanal sınır koşulları + üst Rayleigh sönümleme katmanı
-- [ ] Coriolis + genel sounding'den taban durumu (izentropik varsayımı kalkar)
-- [ ] Doğrulama: dağ dalgası (Schär), yoğunluk akıntısı (Straka), baroklinik test
+- [x] Split-explicit akustik alt-adımlama (yatay explicit, dikey implicit) → dt 6×
+- [x] Arazi-takip eden dikey koordinat (Gal-Chen) + gerilmiş dikey grid (geometric)
+- [x] Açık/radyasyon yanal sınır koşulları + üst Rayleigh sönümleme katmanı
+- [x] Coriolis (f-plane) + genel taban durumu (isentropic / constant_N; sounding Faz 3'te)
+- [x] Doğrulama: Straka yoğunluk akıntısı, Schär dağ dalgası, arazide durağanlık,
+      Galilean değişmezlik, split-explicit/explicit regresyonu (docs/EQUATIONS.md tablosu)
 
 ## Faz 2 — Nem ve mikrofizik
 

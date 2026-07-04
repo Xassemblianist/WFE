@@ -2,13 +2,17 @@
 
 #include "core/constants.hpp"
 #include "core/cuda_check.hpp"
+#include "dynamics/params.hpp"
 
 // Ayriklastirma notlari (ayrinti: docs/EQUATIONS.md):
-//  - 5. mertebe upwind-egilimli akilar (Wicker & Skamarock 2002), RK3 ile eslesir.
-//  - Adveksiyon "advektif-tutarli" akı formunda: momentum ve skalarlar icin
-//    tend = -(1/rho_b)[ div(rho_b V q) - q div(rho_b V) ], boylece sabit alan
-//    sabit kalir ve taban yogunluk agirlikli korunum yaklasik saglanir.
-//  - pi' denklemi Klemp-Wilhelmson: pi' adveksiyonu ihmal edilir.
+//  - Gal-Chen arazi-takip eden zeta koordinati; adveksiyon hesaplama uzayinda
+//    kutle akilariyla (mfx, mfy, mfz) akı formunda, advektif-tutarli:
+//    tend = -(1/rho~)[ div(MF q) - q div(MF) ],  rho~ = rho_b J.
+//  - 5. mertebe upwind arayuz degerleri (WS2002), RK3 ile eslesir.
+//  - Akustik alt-adimlar: yatayda forward-backward (pi* diverjans sonumlemeli,
+//    capraz metrik terimi explicit), dikeyde off-centered implicit w-pi'
+//    tridiagonal cozucu (kolon basina bir thread).
+//  - pi' adveksiyonu ihmal (Klemp-Wilhelmson).
 
 namespace wfe {
 namespace {
@@ -23,6 +27,19 @@ struct DevState {
 
 __device__ __forceinline__ size_t gidx(const GDims& g, int i, int j, int k) {
   return ((size_t)(k + g.ng) * g.NY + (j + g.ng)) * g.NX + (i + g.ng);
+}
+__device__ __forceinline__ size_t g2(const GDims& g, int i, int j) {
+  return (size_t)(j + g.ng) * g.NX + (i + g.ng);
+}
+
+// Ust Rayleigh sonumleme katsayisi alpha(zeta) (kapaliysa 0). Sonumleme
+// katmani duz model tepesine yakin oldugu icin zeta ~ z kabul edilir.
+__device__ __forceinline__ real ray_alpha(real zeta, real zt, const DynParams& dp) {
+  if (dp.rayleigh_zd < (real)0) return 0;
+  if (zeta <= dp.rayleigh_zd || zt <= dp.rayleigh_zd) return 0;
+  const real halfpi = (real)1.5707963267948966;
+  real s = sin(halfpi * (zeta - dp.rayleigh_zd) / (zt - dp.rayleigh_zd));
+  return dp.rayleigh_alpha * s * s;
 }
 
 // q0 (alt) ile q1 (ust) arasindaki yuzeyde 5. mertebe upwind arayuz degeri.
@@ -40,188 +57,415 @@ __device__ __forceinline__ real iface5(real qm2, real qm1, real q0, real q1,
   int k = (int)(blockIdx.z * blockDim.z + threadIdx.z) + (kmin);     \
   if (i >= (imax) || j >= (jmax) || k >= (kmax)) return;
 
-// ---------------------------------------------------------------- divergans
+// ------------------------------------------------------------ kutle akilari
 
-__global__ void k_divergence(GDims g, DevProf p, DevState s, real* div) {
-  WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
+// Genisletilmis halka (+-2) uzerinde hesaplanir; tuketiciler ghost'suz okur.
+__global__ void k_massflux_xy(GDims g, DevProf p, DevMetric m, DevState s, real* mfx,
+                              real* mfy) {
+  int i = (int)(blockIdx.x * blockDim.x + threadIdx.x) - 2;
+  int j = (int)(blockIdx.y * blockDim.y + threadIdx.y) - 2;
+  int k = blockIdx.z * blockDim.z + threadIdx.z;
+  if (i > g.nx + 2 || j > g.ny + 2 || k >= g.nz) return;
+  size_t c = gidx(g, i, j, k);
+  real rjx = (real)0.5 * (p.rhob[gidx(g, i - 1, j, k)] * m.jac[g2(g, i - 1, j)] +
+                          p.rhob[c] * m.jac[g2(g, i, j)]);
+  mfx[c] = rjx * s.u[c];
+  real rjy = (real)0.5 * (p.rhob[gidx(g, i, j - 1, k)] * m.jac[g2(g, i, j - 1)] +
+                          p.rhob[c] * m.jac[g2(g, i, j)]);
+  mfy[c] = rjy * s.v[c];
+}
+
+__global__ void k_massflux_z(GDims g, DevProf p, DevMetric m, DevState s, real* mfz) {
+  int i = (int)(blockIdx.x * blockDim.x + threadIdx.x) - 2;
+  int j = (int)(blockIdx.y * blockDim.y + threadIdx.y) - 2;
+  int k = (int)(blockIdx.z * blockDim.z + threadIdx.z) + 1;
+  if (i > g.nx + 1 || j > g.ny + 1 || k >= g.nz) return;  // k=0, nz: Omega=0
   int kk = k + g.ng;
-  real hd = p.rhob[kk] * ((s.u[gidx(g, i + 1, j, k)] - s.u[gidx(g, i, j, k)]) / g.dx +
-                          (s.v[gidx(g, i, j + 1, k)] - s.v[gidx(g, i, j, k)]) / g.dy);
-  real vd = (p.rhobw[kk + 1] * s.w[gidx(g, i, j, k + 1)] -
-             p.rhobw[kk] * s.w[gidx(g, i, j, k)]) / g.dz;
-  div[gidx(g, i, j, k)] = hd + vd;
+  size_t c = gidx(g, i, j, k);
+  real fac = (real)1 - m.zeta_w[kk] / m.zt;
+  real uw = (real)0.25 * (s.u[gidx(g, i, j, k - 1)] + s.u[gidx(g, i + 1, j, k - 1)] +
+                          s.u[gidx(g, i, j, k)] + s.u[gidx(g, i + 1, j, k)]);
+  real vw = (real)0.25 * (s.v[gidx(g, i, j, k - 1)] + s.v[gidx(g, i, j + 1, k - 1)] +
+                          s.v[gidx(g, i, j, k)] + s.v[gidx(g, i, j + 1, k)]);
+  real cross = (uw * m.hx[g2(g, i, j)] + vw * m.hy[g2(g, i, j)]) * fac;
+  mfz[c] = p.rhobw[c] * (s.w[c] - cross);
+}
+
+__global__ void k_divergence(GDims g, DevMetric m, const real* mfx, const real* mfy,
+                             const real* mfz, real* div) {
+  int i = (int)(blockIdx.x * blockDim.x + threadIdx.x) - 1;
+  int j = (int)(blockIdx.y * blockDim.y + threadIdx.y) - 1;
+  int k = blockIdx.z * blockDim.z + threadIdx.z;
+  if (i > g.nx || j > g.ny || k >= g.nz) return;
+  int kk = k + g.ng;
+  div[gidx(g, i, j, k)] =
+      (mfx[gidx(g, i + 1, j, k)] - mfx[gidx(g, i, j, k)]) / g.dx +
+      (mfy[gidx(g, i, j + 1, k)] - mfy[gidx(g, i, j, k)]) / g.dy +
+      (mfz[gidx(g, i, j, k + 1)] - mfz[gidx(g, i, j, k)]) / m.dzeta_c[kk];
 }
 
 // ------------------------------------------------------------- skaler theta'
 
-__global__ void k_tend_thp(GDims g, DevProf p, DevState s, const real* div, real* tend) {
+__global__ void k_tend_thp(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
+                           const real* mfx, const real* mfy, const real* mfz,
+                           const real* div, real* tend) {
   WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
   int kk = k + g.ng;
   const real* q = s.thp;
   auto Q = [&](int ii, int jj, int kz) { return q[gidx(g, ii, jj, kz)]; };
 
-  real uL = s.u[gidx(g, i, j, k)];
-  real uR = s.u[gidx(g, i + 1, j, k)];
-  real vL = s.v[gidx(g, i, j, k)];
-  real vR = s.v[gidx(g, i, j + 1, k)];
-  real wB = s.w[gidx(g, i, j, k)];
-  real wT = s.w[gidx(g, i, j, k + 1)];
+  real fxL = mfx[gidx(g, i, j, k)];
+  real fxR = mfx[gidx(g, i + 1, j, k)];
+  real fyL = mfy[gidx(g, i, j, k)];
+  real fyR = mfy[gidx(g, i, j + 1, k)];
+  real fzB = mfz[gidx(g, i, j, k)];
+  real fzT = mfz[gidx(g, i, j, k + 1)];
 
-  real rk = p.rhob[kk];
-  real FxL = rk * uL * iface5(Q(i - 3, j, k), Q(i - 2, j, k), Q(i - 1, j, k),
-                              Q(i, j, k), Q(i + 1, j, k), Q(i + 2, j, k), uL);
-  real FxR = rk * uR * iface5(Q(i - 2, j, k), Q(i - 1, j, k), Q(i, j, k),
-                              Q(i + 1, j, k), Q(i + 2, j, k), Q(i + 3, j, k), uR);
-  real FyL = rk * vL * iface5(Q(i, j - 3, k), Q(i, j - 2, k), Q(i, j - 1, k),
-                              Q(i, j, k), Q(i, j + 1, k), Q(i, j + 2, k), vL);
-  real FyR = rk * vR * iface5(Q(i, j - 2, k), Q(i, j - 1, k), Q(i, j, k),
-                              Q(i, j + 1, k), Q(i, j + 2, k), Q(i, j + 3, k), vR);
-  real FzB = p.rhobw[kk] * wB * iface5(Q(i, j, k - 3), Q(i, j, k - 2), Q(i, j, k - 1),
-                                       Q(i, j, k), Q(i, j, k + 1), Q(i, j, k + 2), wB);
-  real FzT = p.rhobw[kk + 1] * wT * iface5(Q(i, j, k - 2), Q(i, j, k - 1), Q(i, j, k),
-                                           Q(i, j, k + 1), Q(i, j, k + 2), Q(i, j, k + 3), wT);
+  real FxL = fxL * iface5(Q(i - 3, j, k), Q(i - 2, j, k), Q(i - 1, j, k), Q(i, j, k),
+                          Q(i + 1, j, k), Q(i + 2, j, k), fxL);
+  real FxR = fxR * iface5(Q(i - 2, j, k), Q(i - 1, j, k), Q(i, j, k), Q(i + 1, j, k),
+                          Q(i + 2, j, k), Q(i + 3, j, k), fxR);
+  real FyL = fyL * iface5(Q(i, j - 3, k), Q(i, j - 2, k), Q(i, j - 1, k), Q(i, j, k),
+                          Q(i, j + 1, k), Q(i, j + 2, k), fyL);
+  real FyR = fyR * iface5(Q(i, j - 2, k), Q(i, j - 1, k), Q(i, j, k), Q(i, j + 1, k),
+                          Q(i, j + 2, k), Q(i, j + 3, k), fyR);
+  real FzB = fzB * iface5(Q(i, j, k - 3), Q(i, j, k - 2), Q(i, j, k - 1), Q(i, j, k),
+                          Q(i, j, k + 1), Q(i, j, k + 2), fzB);
+  real FzT = fzT * iface5(Q(i, j, k - 2), Q(i, j, k - 1), Q(i, j, k), Q(i, j, k + 1),
+                          Q(i, j, k + 2), Q(i, j, k + 3), fzT);
 
-  real fdiv = (FxR - FxL) / g.dx + (FyR - FyL) / g.dy + (FzT - FzB) / g.dz;
-  real wc = (real)0.5 * (wB + wT);
-  tend[gidx(g, i, j, k)] =
-      (-fdiv + Q(i, j, k) * div[gidx(g, i, j, k)]) / rk - wc * p.dthbdz[kk];
-}
-
-// ------------------------------------------------------------------ pi' (KW)
-
-__global__ void k_tend_pip(GDims g, DevProf p, DevState s, real* tend) {
-  WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
-  int kk = k + g.ng;
-  real uL = s.u[gidx(g, i, j, k)];
-  real uR = s.u[gidx(g, i + 1, j, k)];
-  real vL = s.v[gidx(g, i, j, k)];
-  real vR = s.v[gidx(g, i, j + 1, k)];
-  real wB = s.w[gidx(g, i, j, k)];
-  real wT = s.w[gidx(g, i, j, k + 1)];
-
-  real rt = p.rhob[kk] * p.thb[kk];
-  real hdiv = rt * ((uR - uL) / g.dx + (vR - vL) / g.dy);
-  real vdiv = (p.rhobw[kk + 1] * p.thbw[kk + 1] * wT -
-               p.rhobw[kk] * p.thbw[kk] * wB) / g.dz;
-  real coef = phys::Rd * p.pib[kk] / (phys::cv * rt);
-  tend[gidx(g, i, j, k)] = -coef * (hdiv + vdiv);
+  real fdiv = (FxR - FxL) / g.dx + (FyR - FyL) / g.dy + (FzT - FzB) / m.dzeta_c[kk];
+  real rt = p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)];
+  tend[gidx(g, i, j, k)] = (-fdiv + Q(i, j, k) * div[gidx(g, i, j, k)]) / rt -
+                           ray_alpha(m.zeta_c[kk], m.zt, dp) * Q(i, j, k);
 }
 
 // ----------------------------------------------------------------- momentum
 
-__global__ void k_tend_u(GDims g, DevProf p, DevState s, const real* div, real* tend) {
+__global__ void k_tend_u(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
+                         const real* mfx, const real* mfy, const real* mfz,
+                         const real* div, real* tend) {
   WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
   int kk = k + g.ng;
   auto U = [&](int ii, int jj, int kz) { return s.u[gidx(g, ii, jj, kz)]; };
 
-  real rk = p.rhob[kk];
   // x akilari: hucre merkezleri (i-1) ve (i)
-  real vcL = (real)0.5 * (U(i - 1, j, k) + U(i, j, k));
-  real vcR = (real)0.5 * (U(i, j, k) + U(i + 1, j, k));
-  real FxL = rk * vcL * iface5(U(i - 3, j, k), U(i - 2, j, k), U(i - 1, j, k),
-                               U(i, j, k), U(i + 1, j, k), U(i + 2, j, k), vcL);
-  real FxR = rk * vcR * iface5(U(i - 2, j, k), U(i - 1, j, k), U(i, j, k),
-                               U(i + 1, j, k), U(i + 2, j, k), U(i + 3, j, k), vcR);
-  // y akilari: koseler (i-1/2, j-1/2) ve (i-1/2, j+1/2)
-  real vvB = (real)0.5 * (s.v[gidx(g, i - 1, j, k)] + s.v[gidx(g, i, j, k)]);
-  real vvT = (real)0.5 * (s.v[gidx(g, i - 1, j + 1, k)] + s.v[gidx(g, i, j + 1, k)]);
-  real FyB = rk * vvB * iface5(U(i, j - 3, k), U(i, j - 2, k), U(i, j - 1, k),
-                               U(i, j, k), U(i, j + 1, k), U(i, j + 2, k), vvB);
-  real FyT = rk * vvT * iface5(U(i, j - 2, k), U(i, j - 1, k), U(i, j, k),
-                               U(i, j + 1, k), U(i, j + 2, k), U(i, j + 3, k), vvT);
-  // z akilari: (i-1/2, k-1/2) ve (i-1/2, k+1/2)
-  real wwB = (real)0.5 * (s.w[gidx(g, i - 1, j, k)] + s.w[gidx(g, i, j, k)]);
-  real wwT = (real)0.5 * (s.w[gidx(g, i - 1, j, k + 1)] + s.w[gidx(g, i, j, k + 1)]);
-  real FzB = p.rhobw[kk] * wwB * iface5(U(i, j, k - 3), U(i, j, k - 2), U(i, j, k - 1),
-                                        U(i, j, k), U(i, j, k + 1), U(i, j, k + 2), wwB);
-  real FzT = p.rhobw[kk + 1] * wwT * iface5(U(i, j, k - 2), U(i, j, k - 1), U(i, j, k),
-                                            U(i, j, k + 1), U(i, j, k + 2), U(i, j, k + 3), wwT);
+  real fcL = (real)0.5 * (mfx[gidx(g, i - 1, j, k)] + mfx[gidx(g, i, j, k)]);
+  real fcR = (real)0.5 * (mfx[gidx(g, i, j, k)] + mfx[gidx(g, i + 1, j, k)]);
+  real FxL = fcL * iface5(U(i - 3, j, k), U(i - 2, j, k), U(i - 1, j, k), U(i, j, k),
+                          U(i + 1, j, k), U(i + 2, j, k), fcL);
+  real FxR = fcR * iface5(U(i - 2, j, k), U(i - 1, j, k), U(i, j, k), U(i + 1, j, k),
+                          U(i + 2, j, k), U(i + 3, j, k), fcR);
+  // y akilari: koseler
+  real fyB = (real)0.5 * (mfy[gidx(g, i - 1, j, k)] + mfy[gidx(g, i, j, k)]);
+  real fyT = (real)0.5 * (mfy[gidx(g, i - 1, j + 1, k)] + mfy[gidx(g, i, j + 1, k)]);
+  real FyB = fyB * iface5(U(i, j - 3, k), U(i, j - 2, k), U(i, j - 1, k), U(i, j, k),
+                          U(i, j + 1, k), U(i, j + 2, k), fyB);
+  real FyT = fyT * iface5(U(i, j - 2, k), U(i, j - 1, k), U(i, j, k), U(i, j + 1, k),
+                          U(i, j + 2, k), U(i, j + 3, k), fyT);
+  // zeta akilari
+  real fzB = (real)0.5 * (mfz[gidx(g, i - 1, j, k)] + mfz[gidx(g, i, j, k)]);
+  real fzT = (real)0.5 * (mfz[gidx(g, i - 1, j, k + 1)] + mfz[gidx(g, i, j, k + 1)]);
+  real FzB = fzB * iface5(U(i, j, k - 3), U(i, j, k - 2), U(i, j, k - 1), U(i, j, k),
+                          U(i, j, k + 1), U(i, j, k + 2), fzB);
+  real FzT = fzT * iface5(U(i, j, k - 2), U(i, j, k - 1), U(i, j, k), U(i, j, k + 1),
+                          U(i, j, k + 2), U(i, j, k + 3), fzT);
 
-  real fdiv = (FxR - FxL) / g.dx + (FyT - FyB) / g.dy + (FzT - FzB) / g.dz;
+  real fdiv = (FxR - FxL) / g.dx + (FyT - FyB) / g.dy + (FzT - FzB) / m.dzeta_c[kk];
   real dv = (real)0.5 * (div[gidx(g, i - 1, j, k)] + div[gidx(g, i, j, k)]);
-  real pgf = phys::cp * p.thb[kk] *
-             (s.pip[gidx(g, i, j, k)] - s.pip[gidx(g, i - 1, j, k)]) / g.dx;
-  tend[gidx(g, i, j, k)] = (-fdiv + U(i, j, k) * dv) / rk - pgf;
+  real ru = (real)0.5 * (p.rhob[gidx(g, i - 1, j, k)] * m.jac[g2(g, i - 1, j)] +
+                         p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)]);
+  real vavg = (real)0.25 * (s.v[gidx(g, i - 1, j, k)] + s.v[gidx(g, i - 1, j + 1, k)] +
+                            s.v[gidx(g, i, j, k)] + s.v[gidx(g, i, j + 1, k)]);
+  real relax = -ray_alpha(m.zeta_c[kk], m.zt, dp) * (U(i, j, k) - p.ub[kk]);
+  tend[gidx(g, i, j, k)] =
+      (-fdiv + U(i, j, k) * dv) / ru + dp.coriolis_f * vavg + relax;
 }
 
-__global__ void k_tend_v(GDims g, DevProf p, DevState s, const real* div, real* tend) {
+__global__ void k_tend_v(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
+                         const real* mfx, const real* mfy, const real* mfz,
+                         const real* div, real* tend) {
   WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
   int kk = k + g.ng;
   auto V = [&](int ii, int jj, int kz) { return s.v[gidx(g, ii, jj, kz)]; };
 
-  real rk = p.rhob[kk];
-  // y akilari: hucre merkezleri (j-1) ve (j)
-  real vcB = (real)0.5 * (V(i, j - 1, k) + V(i, j, k));
-  real vcT = (real)0.5 * (V(i, j, k) + V(i, j + 1, k));
-  real FyB = rk * vcB * iface5(V(i, j - 3, k), V(i, j - 2, k), V(i, j - 1, k),
-                               V(i, j, k), V(i, j + 1, k), V(i, j + 2, k), vcB);
-  real FyT = rk * vcT * iface5(V(i, j - 2, k), V(i, j - 1, k), V(i, j, k),
-                               V(i, j + 1, k), V(i, j + 2, k), V(i, j + 3, k), vcT);
-  // x akilari: koseler (i-1/2, j-1/2) ve (i+1/2, j-1/2)
-  real uuL = (real)0.5 * (s.u[gidx(g, i, j - 1, k)] + s.u[gidx(g, i, j, k)]);
-  real uuR = (real)0.5 * (s.u[gidx(g, i + 1, j - 1, k)] + s.u[gidx(g, i + 1, j, k)]);
-  real FxL = rk * uuL * iface5(V(i - 3, j, k), V(i - 2, j, k), V(i - 1, j, k),
-                               V(i, j, k), V(i + 1, j, k), V(i + 2, j, k), uuL);
-  real FxR = rk * uuR * iface5(V(i - 2, j, k), V(i - 1, j, k), V(i, j, k),
-                               V(i + 1, j, k), V(i + 2, j, k), V(i + 3, j, k), uuR);
-  // z akilari
-  real wwB = (real)0.5 * (s.w[gidx(g, i, j - 1, k)] + s.w[gidx(g, i, j, k)]);
-  real wwT = (real)0.5 * (s.w[gidx(g, i, j - 1, k + 1)] + s.w[gidx(g, i, j, k + 1)]);
-  real FzB = p.rhobw[kk] * wwB * iface5(V(i, j, k - 3), V(i, j, k - 2), V(i, j, k - 1),
-                                        V(i, j, k), V(i, j, k + 1), V(i, j, k + 2), wwB);
-  real FzT = p.rhobw[kk + 1] * wwT * iface5(V(i, j, k - 2), V(i, j, k - 1), V(i, j, k),
-                                            V(i, j, k + 1), V(i, j, k + 2), V(i, j, k + 3), wwT);
+  real fcB = (real)0.5 * (mfy[gidx(g, i, j - 1, k)] + mfy[gidx(g, i, j, k)]);
+  real fcT = (real)0.5 * (mfy[gidx(g, i, j, k)] + mfy[gidx(g, i, j + 1, k)]);
+  real FyB = fcB * iface5(V(i, j - 3, k), V(i, j - 2, k), V(i, j - 1, k), V(i, j, k),
+                          V(i, j + 1, k), V(i, j + 2, k), fcB);
+  real FyT = fcT * iface5(V(i, j - 2, k), V(i, j - 1, k), V(i, j, k), V(i, j + 1, k),
+                          V(i, j + 2, k), V(i, j + 3, k), fcT);
+  real fxL = (real)0.5 * (mfx[gidx(g, i, j - 1, k)] + mfx[gidx(g, i, j, k)]);
+  real fxR = (real)0.5 * (mfx[gidx(g, i + 1, j - 1, k)] + mfx[gidx(g, i + 1, j, k)]);
+  real FxL = fxL * iface5(V(i - 3, j, k), V(i - 2, j, k), V(i - 1, j, k), V(i, j, k),
+                          V(i + 1, j, k), V(i + 2, j, k), fxL);
+  real FxR = fxR * iface5(V(i - 2, j, k), V(i - 1, j, k), V(i, j, k), V(i + 1, j, k),
+                          V(i + 2, j, k), V(i + 3, j, k), fxR);
+  real fzB = (real)0.5 * (mfz[gidx(g, i, j - 1, k)] + mfz[gidx(g, i, j, k)]);
+  real fzT = (real)0.5 * (mfz[gidx(g, i, j - 1, k + 1)] + mfz[gidx(g, i, j, k + 1)]);
+  real FzB = fzB * iface5(V(i, j, k - 3), V(i, j, k - 2), V(i, j, k - 1), V(i, j, k),
+                          V(i, j, k + 1), V(i, j, k + 2), fzB);
+  real FzT = fzT * iface5(V(i, j, k - 2), V(i, j, k - 1), V(i, j, k), V(i, j, k + 1),
+                          V(i, j, k + 2), V(i, j, k + 3), fzT);
 
-  real fdiv = (FxR - FxL) / g.dx + (FyT - FyB) / g.dy + (FzT - FzB) / g.dz;
+  real fdiv = (FxR - FxL) / g.dx + (FyT - FyB) / g.dy + (FzT - FzB) / m.dzeta_c[kk];
   real dv = (real)0.5 * (div[gidx(g, i, j - 1, k)] + div[gidx(g, i, j, k)]);
-  real pgf = phys::cp * p.thb[kk] *
-             (s.pip[gidx(g, i, j, k)] - s.pip[gidx(g, i, j - 1, k)]) / g.dy;
-  tend[gidx(g, i, j, k)] = (-fdiv + V(i, j, k) * dv) / rk - pgf;
+  real rv = (real)0.5 * (p.rhob[gidx(g, i, j - 1, k)] * m.jac[g2(g, i, j - 1)] +
+                         p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)]);
+  real uavg = (real)0.25 * (s.u[gidx(g, i, j - 1, k)] + s.u[gidx(g, i + 1, j - 1, k)] +
+                            s.u[gidx(g, i, j, k)] + s.u[gidx(g, i + 1, j, k)]);
+  real relax = -ray_alpha(m.zeta_c[kk], m.zt, dp) * V(i, j, k);
+  tend[gidx(g, i, j, k)] = (-fdiv + V(i, j, k) * dv) / rv -
+                           dp.coriolis_f * (uavg - p.ub[kk]) + relax;
 }
 
-__global__ void k_tend_w(GDims g, DevProf p, DevState s, const real* div, real* tend) {
-  WFE_IJK_GUARD(g.nx, g.ny, 1, g.nz)  // k = 1 .. nz-1 (sinirlarda w = 0 sabit)
+__global__ void k_tend_w(GDims g, DevProf p, DevMetric m, DynParams dp, DevState s,
+                         const real* mfx, const real* mfy, const real* mfz,
+                         const real* div, real* tend) {
+  WFE_IJK_GUARD(g.nx, g.ny, 1, g.nz)  // w(0) diagnostik, w(nz)=0
   int kk = k + g.ng;
   auto W = [&](int ii, int jj, int kz) { return s.w[gidx(g, ii, jj, kz)]; };
 
-  real rw = p.rhobw[kk];
-  // x akilari: (i-1/2, k-1/2) ve (i+1/2, k-1/2)
-  real uuL = (real)0.5 * (s.u[gidx(g, i, j, k - 1)] + s.u[gidx(g, i, j, k)]);
-  real uuR = (real)0.5 * (s.u[gidx(g, i + 1, j, k - 1)] + s.u[gidx(g, i + 1, j, k)]);
-  real FxL = rw * uuL * iface5(W(i - 3, j, k), W(i - 2, j, k), W(i - 1, j, k),
-                               W(i, j, k), W(i + 1, j, k), W(i + 2, j, k), uuL);
-  real FxR = rw * uuR * iface5(W(i - 2, j, k), W(i - 1, j, k), W(i, j, k),
-                               W(i + 1, j, k), W(i + 2, j, k), W(i + 3, j, k), uuR);
-  // y akilari
-  real vvB = (real)0.5 * (s.v[gidx(g, i, j, k - 1)] + s.v[gidx(g, i, j, k)]);
-  real vvT = (real)0.5 * (s.v[gidx(g, i, j + 1, k - 1)] + s.v[gidx(g, i, j + 1, k)]);
-  real FyB = rw * vvB * iface5(W(i, j - 3, k), W(i, j - 2, k), W(i, j - 1, k),
-                               W(i, j, k), W(i, j + 1, k), W(i, j + 2, k), vvB);
-  real FyT = rw * vvT * iface5(W(i, j - 2, k), W(i, j - 1, k), W(i, j, k),
-                               W(i, j + 1, k), W(i, j + 2, k), W(i, j + 3, k), vvT);
-  // z akilari: hucre merkezleri (k-1) ve (k)
-  real wcB = (real)0.5 * (W(i, j, k - 1) + W(i, j, k));
-  real wcT = (real)0.5 * (W(i, j, k) + W(i, j, k + 1));
-  real FzB = p.rhob[kk - 1] * wcB * iface5(W(i, j, k - 3), W(i, j, k - 2), W(i, j, k - 1),
-                                           W(i, j, k), W(i, j, k + 1), W(i, j, k + 2), wcB);
-  real FzT = p.rhob[kk] * wcT * iface5(W(i, j, k - 2), W(i, j, k - 1), W(i, j, k),
-                                       W(i, j, k + 1), W(i, j, k + 2), W(i, j, k + 3), wcT);
+  real fxL = (real)0.5 * (mfx[gidx(g, i, j, k - 1)] + mfx[gidx(g, i, j, k)]);
+  real fxR = (real)0.5 * (mfx[gidx(g, i + 1, j, k - 1)] + mfx[gidx(g, i + 1, j, k)]);
+  real FxL = fxL * iface5(W(i - 3, j, k), W(i - 2, j, k), W(i - 1, j, k), W(i, j, k),
+                          W(i + 1, j, k), W(i + 2, j, k), fxL);
+  real FxR = fxR * iface5(W(i - 2, j, k), W(i - 1, j, k), W(i, j, k), W(i + 1, j, k),
+                          W(i + 2, j, k), W(i + 3, j, k), fxR);
+  real fyB = (real)0.5 * (mfy[gidx(g, i, j, k - 1)] + mfy[gidx(g, i, j, k)]);
+  real fyT = (real)0.5 * (mfy[gidx(g, i, j + 1, k - 1)] + mfy[gidx(g, i, j + 1, k)]);
+  real FyB = fyB * iface5(W(i, j - 3, k), W(i, j - 2, k), W(i, j - 1, k), W(i, j, k),
+                          W(i, j + 1, k), W(i, j + 2, k), fyB);
+  real FyT = fyT * iface5(W(i, j - 2, k), W(i, j - 1, k), W(i, j, k), W(i, j + 1, k),
+                          W(i, j + 2, k), W(i, j + 3, k), fyT);
+  // zeta akilari: hucre merkezleri (k-1) ve (k)
+  real fzB = (real)0.5 * (mfz[gidx(g, i, j, k - 1)] + mfz[gidx(g, i, j, k)]);
+  real fzT = (real)0.5 * (mfz[gidx(g, i, j, k)] + mfz[gidx(g, i, j, k + 1)]);
+  real FzB = fzB * iface5(W(i, j, k - 3), W(i, j, k - 2), W(i, j, k - 1), W(i, j, k),
+                          W(i, j, k + 1), W(i, j, k + 2), fzB);
+  real FzT = fzT * iface5(W(i, j, k - 2), W(i, j, k - 1), W(i, j, k), W(i, j, k + 1),
+                          W(i, j, k + 2), W(i, j, k + 3), fzT);
 
-  real fdiv = (FxR - FxL) / g.dx + (FyT - FyB) / g.dy + (FzT - FzB) / g.dz;
+  real fdiv = (FxR - FxL) / g.dx + (FyT - FyB) / g.dy + (FzT - FzB) / m.dzeta_w[kk];
   real dv = (real)0.5 * (div[gidx(g, i, j, k - 1)] + div[gidx(g, i, j, k)]);
-  real pgf = phys::cp * p.thbw[kk] *
-             (s.pip[gidx(g, i, j, k)] - s.pip[gidx(g, i, j, k - 1)]) / g.dz;
-  real buoy = phys::grav * (real)0.5 *
-              (s.thp[gidx(g, i, j, k - 1)] + s.thp[gidx(g, i, j, k)]) / p.thbw[kk];
-  tend[gidx(g, i, j, k)] = (-fdiv + W(i, j, k) * dv) / rw - pgf + buoy;
+  real rw = p.rhobw[gidx(g, i, j, k)] * m.jac[g2(g, i, j)];
+  real relax = -ray_alpha(m.zeta_w[kk], m.zt, dp) * W(i, j, k);
+  tend[gidx(g, i, j, k)] = (-fdiv + W(i, j, k) * dv) / rw + relax;
 }
 
-// ------------------------------------------------------------------- update
+// ---------------------------------------------------------------- difuzyon
 
-__global__ void k_update(const real* s0, const real* tend, real dt, real* out, size_t n) {
-  size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= n) return;
-  out[idx] = s0[idx] + dt * tend[idx];
+// Sabit-K 2. mertebe Laplasyen (idealize testler; dikeyde yerel fiziksel aralik).
+__global__ void k_diffuse(GDims g, DevMetric m, real K, const real* f, real* tend,
+                          int kmin, int knum, int on_w) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int j = blockIdx.y * blockDim.y + threadIdx.y;
+  int k = (int)(blockIdx.z * blockDim.z + threadIdx.z) + kmin;
+  if (i >= g.nx || j >= g.ny || k >= kmin + knum) return;
+  int kk = k + g.ng;
+  real dzl = (on_w ? m.dzeta_w[kk] : m.dzeta_c[kk]) * m.jac[g2(g, i, j)];
+  real c = f[gidx(g, i, j, k)];
+  real lap = (f[gidx(g, i + 1, j, k)] - 2 * c + f[gidx(g, i - 1, j, k)]) / (g.dx * g.dx) +
+             (f[gidx(g, i, j + 1, k)] - 2 * c + f[gidx(g, i, j - 1, k)]) / (g.dy * g.dy) +
+             (f[gidx(g, i, j, k + 1)] - 2 * c + f[gidx(g, i, j, k - 1)]) / (dzl * dzl);
+  tend[gidx(g, i, j, k)] += K * lap;
+}
+
+// ------------------------------------------------- akustik alt-adimlama
+
+constexpr int WFE_MAX_NZ = 320;  // kolon cozucunun yerel dizi siniri (nz+1 <= bu)
+
+// u,v guncellemesi: pi* = pi' + smdiv (pi' - pi'_onceki); arazi capraz terimi
+// (dz/dx * dpi/dzeta) explicit.
+__global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dtau,
+                          real* u, real* v, const real* pip, const real* piprev,
+                          const real* tu, const real* tv) {
+  WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
+  const int kk = k + g.ng;
+  auto ps = [&](int ii, int jj, int kz) {
+    size_t c = gidx(g, ii, jj, kz);
+    return pip[c] + dp.acoustic_smdiv * (pip[c] - piprev[c]);
+  };
+  real ps0 = ps(i, j, k);
+  real dzc2 = m.zeta_c[kk + 1] - m.zeta_c[kk - 1];
+
+  if (!(dp.bc_x_open && i == 0)) {
+    real thbu = (real)0.5 *
+                (p.thb[gidx(g, i - 1, j, k)] + p.thb[gidx(g, i, j, k)]);
+    real grad = (ps0 - ps(i - 1, j, k)) / g.dx;
+    real zxu = m.hx_u[g2(g, i, j)] * ((real)1 - m.zeta_c[kk] / m.zt);
+    if (zxu != (real)0) {
+      real ju = (real)0.5 * (m.jac[g2(g, i - 1, j)] + m.jac[g2(g, i, j)]);
+      real dpdz = (real)0.5 *
+                  ((ps(i - 1, j, k + 1) - ps(i - 1, j, k - 1)) +
+                   (ps(i, j, k + 1) - ps(i, j, k - 1))) / dzc2;
+      grad -= zxu / ju * dpdz;
+    }
+    u[gidx(g, i, j, k)] += dtau * (-phys::cp * thbu * grad + tu[gidx(g, i, j, k)]);
+  }
+  if (!(dp.bc_y_open && j == 0)) {
+    real thbv = (real)0.5 *
+                (p.thb[gidx(g, i, j - 1, k)] + p.thb[gidx(g, i, j, k)]);
+    real grad = (ps0 - ps(i, j - 1, k)) / g.dy;
+    real zyv = m.hy_v[g2(g, i, j)] * ((real)1 - m.zeta_c[kk] / m.zt);
+    if (zyv != (real)0) {
+      real jv = (real)0.5 * (m.jac[g2(g, i, j - 1)] + m.jac[g2(g, i, j)]);
+      real dpdz = (real)0.5 *
+                  ((ps(i, j - 1, k + 1) - ps(i, j - 1, k - 1)) +
+                   (ps(i, j, k + 1) - ps(i, j, k - 1))) / dzc2;
+      grad -= zyv / jv * dpdz;
+    }
+    v[gidx(g, i, j, k)] += dtau * (-phys::cp * thbv * grad + tv[gidx(g, i, j, k)]);
+  }
+}
+
+// w-pi' dikey implicit cozucu + theta' + diagnostik yuzey w'si.
+__global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real dtau,
+                           const real* u, const real* v, real* w, real* pip,
+                           real* piprev, real* thp, const real* tw, const real* tth) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int j = blockIdx.y * blockDim.y + threadIdx.y;
+  if (i >= g.nx || j >= g.ny) return;
+
+  const real c1 = ((real)1 + dp.acoustic_beta) * (real)0.5;
+  const real c2 = ((real)1 - dp.acoustic_beta) * (real)0.5;
+  const real J = m.jac[g2(g, i, j)];
+  const real hxc = m.hx[g2(g, i, j)];
+  const real hyc = m.hy[g2(g, i, j)];
+
+  real P[WFE_MAX_NZ], E[WFE_MAX_NZ], cs[WFE_MAX_NZ], ds[WFE_MAX_NZ], Wn[WFE_MAX_NZ];
+  real Av[WFE_MAX_NZ], Sv[WFE_MAX_NZ];
+
+  // Av: rho_b^w theta_b^w (yuzey ve tepede 0: Omega=0 kosulu — akiya girmez)
+  // Sv: capraz dikey aki (explicit, guncel u,v ile)
+  Av[0] = 0;
+  Av[g.nz] = 0;
+  Sv[0] = 0;
+  Sv[g.nz] = 0;
+  for (int k = 1; k < g.nz; ++k) {
+    int kk = k + g.ng;
+    size_t c = gidx(g, i, j, k);
+    Av[k] = p.rhobw[c] * p.thbw[c];
+    real fac = (real)1 - m.zeta_w[kk] / m.zt;
+    real uw = (real)0.25 * (u[gidx(g, i, j, k - 1)] + u[gidx(g, i + 1, j, k - 1)] +
+                            u[gidx(g, i, j, k)] + u[gidx(g, i + 1, j, k)]);
+    real vw = (real)0.25 * (v[gidx(g, i, j, k - 1)] + v[gidx(g, i, j + 1, k - 1)] +
+                            v[gidx(g, i, j, k)] + v[gidx(g, i, j + 1, k)]);
+    Sv[k] = Av[k] * (uw * hxc + vw * hyc) * fac;
+  }
+
+  for (int k = 0; k < g.nz; ++k) {
+    int kk = k + g.ng;
+    size_t c = gidx(g, i, j, k);
+    real Kt = phys::Rd * p.pib[c] / (phys::cv * p.rhob[c] * p.thb[c] * J);
+    auto rtj = [&](int ii, int jj) {
+      size_t cc = gidx(g, ii, jj, k);
+      return p.rhob[cc] * p.thb[cc] * m.jac[g2(g, ii, jj)];
+    };
+    real rc = rtj(i, j);
+    real Dh = ((real)0.5 * (rtj(i, j) + rtj(i + 1, j)) * u[gidx(g, i + 1, j, k)] -
+               (real)0.5 * (rtj(i - 1, j) + rc) * u[gidx(g, i, j, k)]) / g.dx +
+              ((real)0.5 * (rtj(i, j) + rtj(i, j + 1)) * v[gidx(g, i, j + 1, k)] -
+               (real)0.5 * (rtj(i, j - 1) + rc) * v[gidx(g, i, j, k)]) / g.dy;
+    real dzc = m.dzeta_c[kk];
+    real wk = w[gidx(g, i, j, k)];
+    real wkp = w[gidx(g, i, j, k + 1)];
+    P[k] = pip[c] - dtau * Kt *
+                        (Dh - (Sv[k + 1] - Sv[k]) / dzc +
+                         c2 * (Av[k + 1] * wkp - Av[k] * wk) / dzc);
+    E[k] = dtau * Kt * c1 / dzc;
+  }
+
+  for (int k = 1; k < g.nz; ++k) {
+    int kk = k + g.ng;
+    size_t c = gidx(g, i, j, k);
+    real G = dtau * phys::cp * p.thbw[c] * c1 / (J * m.dzeta_w[kk]);
+    real A = -G * E[k - 1] * Av[k - 1];
+    real B = (real)1 + G * Av[k] * (E[k] + E[k - 1]);
+    real C = -G * E[k] * Av[k + 1];
+    real buoy = phys::grav * (real)0.5 *
+                (thp[gidx(g, i, j, k - 1)] + thp[gidx(g, i, j, k)]) / p.thbw[c];
+    real RHS = w[c] + dtau * (buoy + tw[c]) -
+               dtau * phys::cp * p.thbw[c] * c2 *
+                   (pip[gidx(g, i, j, k)] - pip[gidx(g, i, j, k - 1)]) /
+                   (J * m.dzeta_w[kk]);
+    real D = RHS - G * (P[k] - P[k - 1]);
+    if (k == 1) {
+      cs[k] = C / B;
+      ds[k] = D / B;
+    } else {
+      real mm = B - A * cs[k - 1];
+      cs[k] = C / mm;
+      ds[k] = (D - A * ds[k - 1]) / mm;
+    }
+  }
+
+  Wn[g.nz] = 0;
+  real wabove = 0;
+  for (int k = g.nz - 1; k >= 1; --k) {
+    real wk = ds[k] - cs[k] * wabove;
+    Wn[k] = wk;
+    wabove = wk;
+  }
+  // yuzey: Omega=0 => w = u dz/dx + v dz/dy (arazi boyunca akis)
+  {
+    real us = (real)0.5 * (u[gidx(g, i, j, 0)] + u[gidx(g, i + 1, j, 0)]);
+    real vs = (real)0.5 * (v[gidx(g, i, j, 0)] + v[gidx(g, i, j + 1, 0)]);
+    Wn[0] = us * hxc + vs * hyc;
+  }
+
+  for (int k = 0; k < g.nz; ++k) {
+    size_t c = gidx(g, i, j, k);
+    real oldpi = pip[c];
+    pip[c] = P[k] - E[k] * (Av[k + 1] * Wn[k + 1] - Av[k] * Wn[k]);
+    piprev[c] = oldpi;
+    real wc = (real)0.5 * (Wn[k] + Wn[k + 1]);
+    thp[c] += dtau * (tth[c] - wc * p.dthbdz[c]);
+  }
+  for (int k = 0; k < g.nz; ++k) w[gidx(g, i, j, k)] = Wn[k];
+}
+
+// Acik x sinirinda normal hiz (u) yuzleri: giris taban durumuna sabit,
+// cikis Klemp-Wilhelmson radyasyonu: du/dt = -(u + c*) du/dx.
+__global__ void k_bc_rad_u_x(GDims g, DevProf p, real dtau, real cstar, real* u) {
+  int j = blockIdx.x * blockDim.x + threadIdx.x;
+  int k = blockIdx.y * blockDim.y + threadIdx.y;
+  if (j >= g.ny || k >= g.nz) return;
+  int kk = k + g.ng;
+  real u0 = u[gidx(g, 0, j, k)];
+  if (u0 >= (real)0) {
+    u[gidx(g, 0, j, k)] = p.ub[kk];
+  } else {
+    real cb = u0 - cstar;
+    u[gidx(g, 0, j, k)] = u0 - dtau * cb * (u[gidx(g, 1, j, k)] - u0) / g.dx;
+  }
+  real un = u[gidx(g, g.nx, j, k)];
+  if (un <= (real)0) {
+    u[gidx(g, g.nx, j, k)] = p.ub[kk];
+  } else {
+    real cb = un + cstar;
+    u[gidx(g, g.nx, j, k)] = un - dtau * cb * (un - u[gidx(g, g.nx - 1, j, k)]) / g.dx;
+  }
+}
+
+__global__ void k_bc_rad_v_y(GDims g, real dtau, real cstar, real* v) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int k = blockIdx.y * blockDim.y + threadIdx.y;
+  if (i >= g.nx || k >= g.nz) return;
+  real v0 = v[gidx(g, i, 0, k)];
+  if (v0 >= (real)0) {
+    v[gidx(g, i, 0, k)] = 0;
+  } else {
+    real cb = v0 - cstar;
+    v[gidx(g, i, 0, k)] = v0 - dtau * cb * (v[gidx(g, i, 1, k)] - v0) / g.dy;
+  }
+  real vn = v[gidx(g, i, g.ny, k)];
+  if (vn <= (real)0) {
+    v[gidx(g, i, g.ny, k)] = 0;
+  } else {
+    real cb = vn + cstar;
+    v[gidx(g, i, g.ny, k)] = vn - dtau * cb * (vn - v[gidx(g, i, g.ny - 1, k)]) / g.dy;
+  }
 }
 
 // --------------------------------------------------------- sinir kosullari
@@ -243,6 +487,7 @@ __global__ void k_bc_z_zerograd(GDims g, real* f) {
     f[col + stride * (size_t)(g.nz - 1 + g.ng + m)] = top;
 }
 
+// w: tepede 0; yuzeyde diagnostik deger korunur, ghost'lar w(0) etrafinda tek.
 __global__ void k_bc_z_w(GDims g, real* f) {
   int ir = blockIdx.x * blockDim.x + threadIdx.x;
   int jr = blockIdx.y * blockDim.y + threadIdx.y;
@@ -250,10 +495,10 @@ __global__ void k_bc_z_w(GDims g, real* f) {
   size_t col = (size_t)jr * g.NX + ir;
   size_t stride = (size_t)g.NY * g.NX;
   auto at = [&](int k) -> real& { return f[col + stride * (size_t)(k + g.ng)]; };
-  at(0) = 0;
   at(g.nz) = 0;
+  real w0 = at(0);
   for (int m = 1; m <= g.ng; ++m) {
-    at(-m) = -at(m);
+    at(-m) = 2 * w0 - at(m);
     at(g.nz + m) = -at(g.nz - m);
   }
 }
@@ -280,6 +525,31 @@ __global__ void k_bc_periodic_y(GDims g, real* f) {
       f[plane + (size_t)(g.ng + g.ny - 1 - m) * g.NX + ir];
 }
 
+// Acik sinir: sifir-gradyan ghost. ilast = son gecerli indeks.
+__global__ void k_bc_zg_x(GDims g, real* f, int ilast) {
+  int m = blockIdx.x * blockDim.x + threadIdx.x;
+  int jr = blockIdx.y * blockDim.y + threadIdx.y;
+  int kr = blockIdx.z * blockDim.z + threadIdx.z;
+  if (m >= g.ng || jr >= g.NY || kr >= g.NZ) return;
+  size_t row = ((size_t)kr * g.NY + jr) * g.NX;
+  real left = f[row + (size_t)g.ng];
+  real right = f[row + (size_t)(g.ng + ilast)];
+  f[row + (size_t)(g.ng - 1 - m)] = left;
+  f[row + (size_t)(g.ng + ilast + 1 + m)] = right;
+}
+
+__global__ void k_bc_zg_y(GDims g, real* f, int jlast) {
+  int ir = blockIdx.x * blockDim.x + threadIdx.x;
+  int m = blockIdx.y * blockDim.y + threadIdx.y;
+  int kr = blockIdx.z * blockDim.z + threadIdx.z;
+  if (ir >= g.NX || m >= g.ng || kr >= g.NZ) return;
+  size_t plane = (size_t)kr * g.NY * g.NX;
+  real lo = f[plane + (size_t)g.ng * g.NX + ir];
+  real hi = f[plane + (size_t)(g.ng + jlast) * g.NX + ir];
+  f[plane + (size_t)(g.ng - 1 - m) * g.NX + ir] = lo;
+  f[plane + (size_t)(g.ng + jlast + 1 + m) * g.NX + ir] = hi;
+}
+
 // ------------------------------------------------------------- yardimcilar
 
 dim3 tile_block() { return dim3(32, 4, 2); }
@@ -293,56 +563,129 @@ DevState dev_state(const State& s) {
   return DevState{s.u.d, s.v.d, s.w.d, s.thp.d, s.pip.d};
 }
 
-} // namespace
-
-void apply_bcs(const GDims& g, State& s) {
-  dim3 b2(32, 8);
-  dim3 g2((g.NX + 31) / 32, (g.NY + 7) / 8);
-  k_bc_z_zerograd<<<g2, b2>>>(g, s.u.d);
-  k_bc_z_zerograd<<<g2, b2>>>(g, s.v.d);
-  k_bc_z_zerograd<<<g2, b2>>>(g, s.thp.d);
-  k_bc_z_zerograd<<<g2, b2>>>(g, s.pip.d);
-  k_bc_z_w<<<g2, b2>>>(g, s.w.d);
-
+void bc_lateral_x(const GDims& g, const DynParams& dp, real* f, int ilast) {
   dim3 bx(4, 8, 8);
   dim3 gx((g.ng + 3) / 4, (g.NY + 7) / 8, (g.NZ + 7) / 8);
-  real* fields[5] = {s.u.d, s.v.d, s.w.d, s.thp.d, s.pip.d};
-  for (real* f : fields) k_bc_periodic_x<<<gx, bx>>>(g, f);
+  if (dp.bc_x_open)
+    k_bc_zg_x<<<gx, bx>>>(g, f, ilast);
+  else
+    k_bc_periodic_x<<<gx, bx>>>(g, f);
+}
 
+void bc_lateral_y(const GDims& g, const DynParams& dp, real* f, int jlast) {
   dim3 by(32, 2, 8);
   dim3 gy((g.NX + 31) / 32, (g.ng + 1) / 2, (g.NZ + 7) / 8);
-  for (real* f : fields) k_bc_periodic_y<<<gy, by>>>(g, f);
+  if (dp.bc_y_open)
+    k_bc_zg_y<<<gy, by>>>(g, f, jlast);
+  else
+    k_bc_periodic_y<<<gy, by>>>(g, f);
+}
+
+} // namespace
+
+void apply_bcs(const GDims& g, const DynParams& dp, State& s) {
+  dim3 b2(32, 8);
+  dim3 g2d((g.NX + 31) / 32, (g.NY + 7) / 8);
+  k_bc_z_zerograd<<<g2d, b2>>>(g, s.u.d);
+  k_bc_z_zerograd<<<g2d, b2>>>(g, s.v.d);
+  k_bc_z_zerograd<<<g2d, b2>>>(g, s.thp.d);
+  k_bc_z_zerograd<<<g2d, b2>>>(g, s.pip.d);
+  k_bc_z_w<<<g2d, b2>>>(g, s.w.d);
+
+  bc_lateral_x(g, dp, s.u.d, g.nx);
+  bc_lateral_x(g, dp, s.v.d, g.nx - 1);
+  bc_lateral_x(g, dp, s.w.d, g.nx - 1);
+  bc_lateral_x(g, dp, s.thp.d, g.nx - 1);
+  bc_lateral_x(g, dp, s.pip.d, g.nx - 1);
+
+  bc_lateral_y(g, dp, s.u.d, g.ny - 1);
+  bc_lateral_y(g, dp, s.v.d, g.ny);
+  bc_lateral_y(g, dp, s.w.d, g.ny - 1);
+  bc_lateral_y(g, dp, s.thp.d, g.ny - 1);
+  bc_lateral_y(g, dp, s.pip.d, g.ny - 1);
 
   check_kernel("apply_bcs");
 }
 
-void compute_divergence(const GDims& g, const DevProf& p, const State& s, Field3D& div) {
-  k_divergence<<<tile_grid(g.nx, g.ny, g.nz), tile_block()>>>(g, p, dev_state(s), div.d);
-  check_kernel("k_divergence");
-}
-
-void compute_tendencies(const GDims& g, const DevProf& p, const State& s,
-                        const Field3D& div, State& tend) {
+void compute_mass_fluxes(const GDims& g, const DevProf& p, const DevMetric& m,
+                         const State& s, Field3D& mfx, Field3D& mfy, Field3D& mfz) {
   DevState ds = dev_state(s);
   dim3 blk = tile_block();
-  k_tend_u<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, ds, div.d, tend.u.d);
-  k_tend_v<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, ds, div.d, tend.v.d);
-  k_tend_w<<<tile_grid(g.nx, g.ny, g.nz - 1), blk>>>(g, p, ds, div.d, tend.w.d);
-  k_tend_thp<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, ds, div.d, tend.thp.d);
-  k_tend_pip<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, ds, tend.pip.d);
+  k_massflux_xy<<<tile_grid(g.nx + 5, g.ny + 5, g.nz), blk>>>(g, p, m, ds, mfx.d, mfy.d);
+  k_massflux_z<<<tile_grid(g.nx + 4, g.ny + 4, g.nz - 1), blk>>>(g, p, m, ds, mfz.d);
+  check_kernel("compute_mass_fluxes");
+}
+
+void compute_divergence(const GDims& g, const DevMetric& m, const Field3D& mfx,
+                        const Field3D& mfy, const Field3D& mfz, Field3D& div) {
+  k_divergence<<<tile_grid(g.nx + 2, g.ny + 2, g.nz), tile_block()>>>(g, m, mfx.d, mfy.d,
+                                                                      mfz.d, div.d);
+  check_kernel("compute_divergence");
+}
+
+void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
+                        const DynParams& dp, const State& s, const Field3D& mfx,
+                        const Field3D& mfy, const Field3D& mfz, const Field3D& div,
+                        State& tend) {
+  DevState ds = dev_state(s);
+  dim3 blk = tile_block();
+  k_tend_u<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
+                                                 div.d, tend.u.d);
+  k_tend_v<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
+                                                 div.d, tend.v.d);
+  k_tend_w<<<tile_grid(g.nx, g.ny, g.nz - 1), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d,
+                                                     mfz.d, div.d, tend.w.d);
+  k_tend_thp<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
+                                                   div.d, tend.thp.d);
+  // pi' yavas egilimi yok (tend.pip 0 kalir)
+  if (dp.diff_K > (real)0) {
+    k_diffuse<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, m, dp.diff_K, s.u.d, tend.u.d, 0,
+                                                    g.nz, 0);
+    k_diffuse<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, m, dp.diff_K, s.v.d, tend.v.d, 0,
+                                                    g.nz, 0);
+    k_diffuse<<<tile_grid(g.nx, g.ny, g.nz - 1), blk>>>(g, m, dp.diff_K, s.w.d,
+                                                        tend.w.d, 1, g.nz - 1, 1);
+    k_diffuse<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, m, dp.diff_K, s.thp.d,
+                                                    tend.thp.d, 0, g.nz, 0);
+  }
   check_kernel("compute_tendencies");
 }
 
-void update_state(const State& s0, const State& tend, real dt, State& out) {
-  size_t n = s0.u.n;
-  int blk = 256;
-  int grd = (int)((n + blk - 1) / blk);
-  k_update<<<grd, blk>>>(s0.u.d, tend.u.d, dt, out.u.d, n);
-  k_update<<<grd, blk>>>(s0.v.d, tend.v.d, dt, out.v.d, n);
-  k_update<<<grd, blk>>>(s0.w.d, tend.w.d, dt, out.w.d, n);
-  k_update<<<grd, blk>>>(s0.thp.d, tend.thp.d, dt, out.thp.d, n);
-  k_update<<<grd, blk>>>(s0.pip.d, tend.pip.d, dt, out.pip.d, n);
-  check_kernel("update_state");
+void acoustic_substep(const GDims& g, const DevProf& p, const DevMetric& m,
+                      const DynParams& dp, real dtau, State& s, const State& tend,
+                      Field3D& piprev) {
+  dim3 blk = tile_block();
+  k_acou_uv<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, dtau, s.u.d, s.v.d,
+                                                  s.pip.d, piprev.d, tend.u.d,
+                                                  tend.v.d);
+  if (dp.bc_x_open) {
+    dim3 b2(32, 8);
+    dim3 g2d((g.ny + 31) / 32, (g.nz + 7) / 8);
+    k_bc_rad_u_x<<<g2d, b2>>>(g, p, dtau, dp.cstar, s.u.d);
+  }
+  if (dp.bc_y_open) {
+    dim3 b2(32, 8);
+    dim3 g2d((g.nx + 31) / 32, (g.nz + 7) / 8);
+    k_bc_rad_v_y<<<g2d, b2>>>(g, dtau, dp.cstar, s.v.d);
+  }
+  // Dh icin u(nx), v(ny) ve komsu kolonlar taze olmali
+  bc_lateral_x(g, dp, s.u.d, g.nx);
+  bc_lateral_y(g, dp, s.u.d, g.ny - 1);
+  bc_lateral_x(g, dp, s.v.d, g.nx - 1);
+  bc_lateral_y(g, dp, s.v.d, g.ny);
+
+  dim3 bcol(32, 8);
+  dim3 gcol((g.nx + 31) / 32, (g.ny + 7) / 8);
+  k_acou_wpi<<<gcol, bcol>>>(g, p, m, dp, dtau, s.u.d, s.v.d, s.w.d, s.pip.d, piprev.d,
+                             s.thp.d, tend.w.d, tend.thp.d);
+
+  // sonraki alt-adim pi' yanal ghost'lari + capraz terim icin dusey ghost'lari okur
+  bc_lateral_x(g, dp, s.pip.d, g.nx - 1);
+  bc_lateral_y(g, dp, s.pip.d, g.ny - 1);
+  dim3 b2(32, 8);
+  dim3 g2d((g.NX + 31) / 32, (g.NY + 7) / 8);
+  k_bc_z_zerograd<<<g2d, b2>>>(g, s.pip.d);
+  check_kernel("acoustic_substep");
 }
 
 } // namespace wfe

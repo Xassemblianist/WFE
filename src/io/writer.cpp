@@ -43,6 +43,18 @@ void Writer::write(const State& s, int step, real t) {
   std::printf("  cikti yazildi: step %d (t = %.1f s)\n", step, (double)t);
 }
 
+void Writer::write_static(const char* name, const std::vector<float>& data) {
+  char path[512];
+  std::snprintf(path, sizeof(path), "%s/%s.bin", dir_.c_str(), name);
+  FILE* f = std::fopen(path, "wb");
+  if (!f) {
+    std::fprintf(stderr, "cikti dosyasi acilamadi: %s\n", path);
+    std::exit(1);
+  }
+  std::fwrite(data.data(), sizeof(float), data.size(), f);
+  std::fclose(f);
+}
+
 void Writer::write_field(const real* dev, const char* name, int step, int nzlev) {
   WFE_CUDA_CHECK(cudaMemcpy(full_.data(), dev, full_.size() * sizeof(real),
                             cudaMemcpyDeviceToHost));

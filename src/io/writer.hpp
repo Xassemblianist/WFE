@@ -14,6 +14,8 @@ class Writer {
  public:
   void init(const GDims& g, const std::string& out_dir, real dt);
   void write(const State& s, int step, real t);
+  // Statik alan (or. hucre merkezi yukseklikleri "zc"): ghost'suz, host verisi.
+  void write_static(const char* name, const std::vector<float>& data);
 
  private:
   void write_field(const real* dev, const char* name, int step, int nzlev);
