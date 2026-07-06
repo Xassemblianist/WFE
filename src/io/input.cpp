@@ -28,8 +28,8 @@ bool InputData::load(const GDims& g, const std::string& dir) {
     std::fprintf(stderr, "girdi grid boyutlari case ile uyusmuyor\n");
     return false;
   }
-  if (meta.get_int("version", 1) < 2) {
-    std::fprintf(stderr, "girdi v1 — prep_gfs.py ile yeniden uretin (v2 gerekli)\n");
+  if (meta.get_int("version", 1) < 3) {
+    std::fprintf(stderr, "girdi eski — prep_gfs.py ile yeniden uretin (v3 gerekli)\n");
     return false;
   }
   int npf = meta.get_int("np_prof", 0);
@@ -48,8 +48,8 @@ bool InputData::load(const GDims& g, const std::string& dir) {
             read_f32(f, prof_qv, npf) && read_f32(f, prof_u, npf) &&
             read_f32(f, h, n2) && read_f32(f, fcor, n2) && read_f32(f, tsk, n2) &&
             read_f32(f, land, n2) && read_f32(f, lat, n2) && read_f32(f, lon, n2) &&
-            read_f32(f, u, n3) && read_f32(f, v, n3) && read_f32(f, th, n3) &&
-            read_f32(f, pi, n3) && read_f32(f, qv, n3);
+            read_f32(f, soilw, n2) && read_f32(f, u, n3) && read_f32(f, v, n3) &&
+            read_f32(f, th, n3) && read_f32(f, pi, n3) && read_f32(f, qv, n3);
   std::fclose(f);
   if (!ok) std::fprintf(stderr, "wfe_init.bin eksik/bozuk\n");
   return ok;

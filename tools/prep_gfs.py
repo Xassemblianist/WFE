@@ -93,9 +93,10 @@ def download(date, cyc, fh, cache: Path, bbox):
     out = cache / f"{date}_{cyc}_{fh:03d}.grib2"
     if out.exists() and out.stat().st_size > 10000:
         return out
-    lvars = "".join(f"&var_{v}=on"
-                    for v in ["UGRD", "VGRD", "TMP", "RH", "HGT", "PRES", "LAND"])
-    levs = "".join(f"&lev_{p}_mb=on" for p in LEVELS) + "&lev_surface=on"
+    lvars = "".join(f"&var_{v}=on" for v in
+                    ["UGRD", "VGRD", "TMP", "RH", "HGT", "PRES", "LAND", "SOILW"])
+    levs = ("".join(f"&lev_{p}_mb=on" for p in LEVELS) + "&lev_surface=on"
+            + "&lev_0-0.1_m_below_ground=on")
     url = ("https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
            f"?dir=%2Fgfs.{date}%2F{cyc}%2Fatmos&file={fname}{lvars}{levs}"
            f"&subregion=&leftlon={bbox[0]}&rightlon={bbox[1]}"
@@ -268,7 +269,14 @@ def main():
     tsk = bilinear(fields0[("t", "surface")], lats, lons, plat, plon)
     lkey = ("lsm", "surface") if ("lsm", "surface") in fields0 else ("land", "surface")
     land = (bilinear(fields0[lkey], lats, lons, plat, plon) > 0.5).astype(np.float64)
-    print(f"yuzey: TSK {tsk.min():.0f}..{tsk.max():.0f} K, kara orani {land.mean()*100:.0f}%")
+    skey = next((k for k in fields0 if k[0] == "soilw"), None)
+    if skey is not None:
+        soilw = bilinear(fields0[skey], lats, lons, plat, plon)
+    else:
+        soilw = np.full_like(tsk, 0.25)  # SOILW yoksa ilkim ortalamasi
+    soilw = np.clip(soilw, 0.0, 0.6)
+    print(f"yuzey: TSK {tsk.min():.0f}..{tsk.max():.0f} K, kara %{land.mean()*100:.0f}, "
+          f"toprak nemi {soilw[land>0.5].mean():.2f} m3/m3")
 
     # model fiziksel yukseklikleri (Gal-Chen, C++ ile birebir)
     z3 = h[None, :, :] + zc[:, None, None] * (zt - h[None, :, :]) / zt
@@ -305,11 +313,12 @@ def main():
         land.astype(np.float32).tofile(f)
         plat.astype(np.float32).tofile(f)
         plon.astype(np.float32).tofile(f)
+        soilw.astype(np.float32).tofile(f)
         for a in init_fields:
             a.astype(np.float32).tofile(f)
 
     meta = [
-        f"version = 2",
+        f"version = 3",
         f"nx = {nx}", f"ny = {ny}", f"nz = {nz}",
         f"np_prof = {npf}",
         f"start = {args.date}{args.cycle}",

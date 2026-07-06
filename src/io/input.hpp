@@ -20,7 +20,7 @@ class InputData {
 
   std::vector<real> prof_z, prof_th, prof_qv, prof_u;  // taban tablolari
   std::vector<real> h, fcor;                            // [ny*nx]
-  std::vector<real> tsk, land, lat, lon;                // [ny*nx] yuzey alanlari (v2)
+  std::vector<real> tsk, land, lat, lon, soilw;         // [ny*nx] yuzey alanlari (v2/v3)
   std::vector<real> u, v, th, pi, qv;                   // [nz*ny*nx], t=0
   real bdy_interval = 10800;
   int n_bdy = 0;

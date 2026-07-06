@@ -60,8 +60,8 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
                              int doy, int nonlocal, real* thp, const real* pip,
                              real* qv, const real* qc, const real* u, const real* v,
                              real* tsk, const real* tdeep, const real* land,
-                             const real* lat, const real* lon, real* km, real* cdv,
-                             real* pblh) {
+                             const real* lat, const real* lon, const real* soilw,
+                             real* km, real* cdv, real* pblh, real* t2m, real* u10) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   int j = blockIdx.y * blockDim.y + threadIdx.y;
   if (i >= g.nx || j >= g.ny) return;
@@ -92,7 +92,8 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   bool onland = land[c2] > (real)0.5;
   real z0 = onland ? (real)0.1 : (real)2e-4;
   real alb = onland ? (real)0.2 : (real)0.08;
-  real beta = onland ? (real)0.3 : (real)1.0;
+  // evaporasyon verimi: karada GFS toprak nemi / tarla kapasitesi (~0.35), denizde 1
+  real beta = onland ? fmin((real)1, fmax((real)0.15, soilw[c2] / (real)0.35)) : (real)1;
   real z1 = (real)0.5 * dzc[0];
   real V1 = sqrt(uc[0] * uc[0] + vc[0] * vc[0]);
   if (V1 < (real)0.5) V1 = (real)0.5;
@@ -120,6 +121,14 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   real Cd = a2 * Fm;
   real Ch = a2 * Fh;
   cdv[c2] = Cd * V1;
+
+  // 2m sicaklik + 10m ruzgar tanilari (log profil, istasyon dogrulamasi icin)
+  real z0h = z0 * (real)0.1;
+  real r10 = fmin((real)1, log((real)10 / z0) / log(z1 / z0));
+  u10[c2] = V1 * r10;
+  real r2 = fmin((real)1, fmax((real)0, log((real)2 / z0h) / log(z1 / z0h)));
+  real th2 = ths + (thcol[0] - ths) * r2;
+  t2m[c2] = th2 * pi1;
 
   real shf = Ch * V1 * (ths - thcol[0]);                       // kinematik [K m/s]
   real qflx = Ch * V1 * beta * (qs_s - qvcol[0]);              // [kg/kg m/s]
@@ -357,8 +366,11 @@ void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int 
   land_.alloc(n2);
   lat_.alloc(n2);
   lon_.alloc(n2);
+  soilw_.alloc(n2);
   cdv_.alloc(n2);
   pblh_.alloc(n2);
+  t2m_.alloc(n2);
+  u10_.alloc(n2);
 
   auto up2 = [&](Field3D& f, const std::vector<real>& src) {
     std::vector<real> h(n2, 0);
@@ -372,6 +384,7 @@ void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int 
   up2(land_, in.land);
   up2(lat_, in.lat);
   up2(lon_, in.lon);
+  up2(soilw_, in.soilw);
 }
 
 void SfcPBL::release() {
@@ -381,8 +394,11 @@ void SfcPBL::release() {
   land_.release();
   lat_.release();
   lon_.release();
+  soilw_.release();
   cdv_.release();
   pblh_.release();
+  t2m_.release();
+  u10_.release();
 }
 
 void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt, real t,
@@ -393,7 +409,8 @@ void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt,
   dim3 gr((g.nx + 31) / 32, (g.ny + 7) / 8);
   k_sfc_scalar<<<gr, b>>>(g, p, m, dt, utc, doy_, nonlocal_ ? 1 : 0, s.thp.d, s.pip.d,
                           s.qv.d, s.qc.d, s.u.d, s.v.d, tsk_.d, tdeep_.d, land_.d,
-                          lat_.d, lon_.d, km_.d, cdv_.d, pblh_.d);
+                          lat_.d, lon_.d, soilw_.d, km_.d, cdv_.d, pblh_.d,
+                          t2m_.d, u10_.d);
   dim3 gu((g.nx - 1 + 31) / 32, (g.ny + 7) / 8);
   k_sfc_u<<<gu, b>>>(g, p, m, dt, s.u.d, km_.d, cdv_.d);
   dim3 gv((g.nx + 31) / 32, (g.ny - 1 + 7) / 8);

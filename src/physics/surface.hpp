@@ -28,12 +28,15 @@ class SfcPBL {
 
   const Field3D& tsk() const { return tsk_; }
   const Field3D& pblh() const { return pblh_; }  // 2D PBL yuksekligi [m]
+  const Field3D& t2m() const { return t2m_; }    // 2D 2m sicaklik [K]
+  const Field3D& u10() const { return u10_; }    // 2D 10m ruzgar hizi [m/s]
 
  private:
   Field3D km_;                              // momentum K, w seviyeleri [m2/s]
-  Field3D tsk_, tdeep_, land_, lat_, lon_;  // 2D yuzey alanlari
+  Field3D tsk_, tdeep_, land_, lat_, lon_, soilw_;  // 2D yuzey alanlari
   Field3D cdv_;                             // 2D Cd*|V1| (momentum icin)
   Field3D pblh_;                            // 2D PBL yuksekligi (nonlocal) [m]
+  Field3D t2m_, u10_;                        // 2D 2m sicaklik / 10m ruzgar tanilari
   real start_hour_ = 0;
   int doy_ = 1;
   bool nonlocal_ = false;

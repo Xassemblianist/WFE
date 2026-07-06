@@ -388,6 +388,8 @@ int main(int argc, char** argv) {
       if (phys_on) {
         writer.write_field2d(phys.tsk(), "tsk", step);
         writer.write_field2d(phys.pblh(), "pblh", step);
+        writer.write_field2d(phys.t2m(), "t2m", step);
+        writer.write_field2d(phys.u10(), "u10", step);
       }
     }
   }
