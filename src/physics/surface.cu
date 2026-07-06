@@ -125,21 +125,59 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   real qflx = Ch * V1 * beta * (qs_s - qvcol[0]);              // [kg/kg m/s]
   if (!onland && qflx < (real)0) qflx = 0;                     // deniz: cig yok
 
-  // --- radyasyon + levha toprak ---
+  // --- kolon radyasyonu (iki-aki broadband) ---
+  // Gunes geometrisi
   real decl = (real)0.40928 * sin((real)6.2832 * ((real)284 + doy) / (real)365);
   real latr = lat[c2] * (real)0.0174533;
   real hsol = utc + lon[c2] / (real)15;
   real H = (real)0.2618 * (hsol - (real)12);
   real cosz = sin(latr) * sin(decl) + cos(latr) * cos(decl) * cos(H);
   if (cosz < (real)0) cosz = 0;
-  real trc = (real)1 / ((real)1 + (real)0.02 * lwp);           // bulut gecirgenligi
-  real swn = S0 * cosz * (real)0.75 * trc * ((real)1 - alb);
-  real e_hpa = qvcol[0] * p1 / ((real)0.622 * (real)100);
-  real cc = lwp / (real)50;
-  if (cc > (real)1) cc = 1;
-  real lwd = SIGMA * T1 * T1 * T1 * T1 *
-             ((real)0.60 + (real)0.042 * sqrt(e_hpa > (real)0 ? e_hpa : (real)0)) *
-             ((real)1 + (real)0.22 * cc * cc);
+
+  real Tlev[SFC_MAX_NZ], epslw[SFC_MAX_NZ], Fup[SFC_MAX_NZ], Fdn[SFC_MAX_NZ];
+  real radht[SFC_MAX_NZ];  // radyatif isitma hizi [K/s] (theta)
+  for (int k = 0; k < g.nz; ++k) {
+    size_t c = gidx(g, i, j, k);
+    real pik = p.pib[c] + pip[c];
+    Tlev[k] = thcol[k] * pik;
+    real du = rho[k] * qvcol[k] * dzc[k];                    // su buhari yolu
+    real dl = rho[k] * (qc[c] > (real)0 ? qc[c] : (real)0) * dzc[k] * (real)1000;
+    epslw[k] = (real)1 - exp(-((real)0.10 * du + (real)0.20 * dl));
+  }
+  // uzun dalga: asagi (tepeden) sonra yukari (yuzeyden)
+  Fdn[g.nz] = (real)0;                                        // model tepesinde ~0
+  for (int k = g.nz - 1; k >= 0; --k)
+    Fdn[k] = Fdn[k + 1] * ((real)1 - epslw[k]) +
+             epslw[k] * SIGMA * Tlev[k] * Tlev[k] * Tlev[k] * Tlev[k];
+  real lwd = Fdn[0];
+  Fup[0] = (real)0.97 * SIGMA * Ts * Ts * Ts * Ts + (real)0.03 * Fdn[0];
+  for (int k = 0; k < g.nz; ++k)
+    Fup[k + 1] = Fup[k] * ((real)1 - epslw[k]) +
+                 epslw[k] * SIGMA * Tlev[k] * Tlev[k] * Tlev[k] * Tlev[k];
+  // kisa dalga: tek isin, su buhari + bulut soguurma
+  real mu = fmax(cosz, (real)0.05);
+  real Sdn = S0 * cosz * (real)0.92;                          // model tepesi (ozon/rayleigh sonrasi)
+  real swabs[SFC_MAX_NZ];
+  for (int k = g.nz - 1; k >= 0; --k) {
+    size_t c = gidx(g, i, j, k);
+    real du = rho[k] * qvcol[k] * dzc[k];
+    real dl = rho[k] * (qc[c] > (real)0 ? qc[c] : (real)0) * dzc[k] * (real)1000;
+    real tau = exp(-((real)0.02 * du + (real)0.15 * dl) / mu);
+    real ab = Sdn * ((real)1 - tau);
+    swabs[k] = ab;
+    Sdn *= tau;
+  }
+  real swn = Sdn * ((real)1 - alb);                           // yuzeyde net SW
+  // katman radyatif isitma: LW aki yakinsamasi + SW soguurma
+  for (int k = 0; k < g.nz; ++k) {
+    size_t c = gidx(g, i, j, k);
+    real pik = p.pib[c] + pip[c];
+    real lwconv = (Fdn[k + 1] - Fdn[k]) + (Fup[k] - Fup[k + 1]);  // [W/m2 katmana]
+    real net = lwconv + swabs[k];
+    radht[k] = net / (rho[k] * phys::cp * dzc[k]) / pik;      // theta hizi [K/s]
+  }
+
+  // --- levha toprak ---
   real lwu = (real)0.97 * SIGMA * Ts * Ts * Ts * Ts;
   real G = swn + (real)0.97 * lwd - lwu - rho[0] * phys::cp * shf * pi1 -
            rho[0] * phys::Lv * qflx;
@@ -243,15 +281,13 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   diffuse_column(g.nz, dt, rho, rhow, dzc, dzw, Kw, rho[0] * shf, thcol, fcg_th);
   diffuse_column(g.nz, dt, rho, rhow, dzc, dzw, Kw, rho[0] * qflx, qvcol, fcg_qv);
 
-  // troposferik LW sogumasi: -2 K/gun, 11 km ustunde sifira iner
-  const real coolrate = (real)-2.31e-5;  // -2 K / 86400 s
+  // kolon radyatif isitma (iki-aki hesabindan) — sabit sogumanin yerine
   for (int k = 0; k < g.nz; ++k) {
     size_t c = gidx(g, i, j, k);
-    real zc = m.zeta_c[k + g.ng] * J;
-    real ramp = zc < (real)11000 ? (real)1
-                                 : ((real)13000 - zc) / (real)2000;
-    if (ramp < (real)0) ramp = 0;
-    thp[c] = thcol[k] - p.thb[c] + dt * coolrate * ramp;
+    real dth = dt * radht[k];
+    if (dth > (real)0.02) dth = (real)0.02;    // adim basi guvenlik siniri [K]
+    if (dth < (real)-0.02) dth = (real)-0.02;
+    thp[c] = thcol[k] - p.thb[c] + dth;
     real q = qvcol[k];
     qv[c] = q > (real)0 ? q : (real)0;
   }
