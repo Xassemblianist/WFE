@@ -27,14 +27,12 @@ def read_ini(path):
     return kv
 
 
-def fetch_metars(bbox, valid_dt):
-    """aviationweather.gov METAR JSON API — gecerli saate yakin gozlemler.
-    bbox = (lat_min, lon_min, lat_max, lon_max)."""
-    # API bbox sirasi: miny,minx,maxy,maxx (lat/lon)
+def fetch_metars(bbox):
+    """aviationweather.gov METAR JSON API — alandaki guncel gozlemler.
+    bbox = (lat_min, lon_min, lat_max, lon_max). API tarihsel sorgu desteklemez;
+    yalniz guncel/son gozlemler doner (gecerli zaman ~simdi olmali)."""
     b = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
-    date = valid_dt.strftime("%Y%m%d_%H%M%SZ")
-    url = (f"https://aviationweather.gov/api/data/metar?bbox={b}"
-           f"&format=json&date={date}&hours=1")
+    url = f"https://aviationweather.gov/api/data/metar?bbox={b}&format=json&hours=3"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "wfe-verify"})
         with urllib.request.urlopen(req, timeout=60) as r:
@@ -78,11 +76,20 @@ def main():
 
     bbox = (float(plat.min()), float(plon.min()), float(plat.max()), float(plon.max()))
     print(f"gecerli zaman: {valid:%Y-%m-%d %H}Z | alan lat {bbox[0]:.1f}..{bbox[2]:.1f}")
-    obs = fetch_metars(bbox, valid)
+    obs = fetch_metars(bbox)
     print(f"{len(obs)} METAR alindi")
     if not obs:
-        print("gozlem yok — arsiv erisimi/tarih araligini kontrol edin")
+        print("gozlem yok — API/ag erisimini kontrol edin")
         return
+    # gecerli zamana ±90 dk penceredeki gozlemleri sec
+    vts = valid.timestamp()
+    obs = [o for o in obs if abs(o.get("obsTime", 0) - vts) <= 5400]
+    if not obs:
+        print(f"UYARI: gecerli zamana (±90dk) yakin gozlem yok — API yalniz guncel "
+              f"veri dondurur; gecerli zaman ~simdi olan bir tahmin kosun "
+              f"(run_forecast.py). Atlaniyor.")
+        return
+    print(f"gecerli zamana yakin {len(obs)} gozlem eslendi")
 
     latf, lonf = plat.ravel(), plon.ravel()
     dT, dW, nT, nW = [], [], 0, 0

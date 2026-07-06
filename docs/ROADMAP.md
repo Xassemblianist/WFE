@@ -72,9 +72,13 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [x] NetCDF dışa aktarım (tools/to_netcdf.py, sıkıştırmalı, xarray tabanlı)
 - [x] Doğrulama aracı (tools/verify.py): GFS hedefine karşı alan + seviye-bazlı
       RMSE/beceri raporu — vaka bazlı sistematik iyileştirmenin altyapısı
-- [ ] Gözlemlerle (METAR/SYNOP) nokta doğrulaması
+- [x] Gözlemlerle METAR nokta doğrulaması ✅ (tools/verify_metar.py): aviationweather
+      API'sinden gerçek istasyon gözlemi, model 2m T / 10m rüzgâr en-yakın eşleme.
+      İlk sonuç (07-06 12Z, 337 istasyon): 10m rüzgâr bias +0.3 RMSE 2.9 m/s (iyi);
+      2m T bias −5.7°C (öğle soğuk yanlılığı → levha ısıl ataleti; gelecek ayar)
 - [ ] Nesting (iç içe alan) — opsiyonel
 - [ ] Zamanlanmış otomatik koşular (görev zamanlayıcı)
+- [ ] 2m sıcaklık soğuk yanlılığı: levha ısı kapasitesi/gündüz ısınma ayarı (çok vakalı)
 
 ## Faz 6 — Performans (v1 ✅ 2026-07-04)
 
