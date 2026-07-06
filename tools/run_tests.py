@@ -58,10 +58,23 @@ def field_min(case, var, step):
     return float(a.min())
 
 
+def uv_symmetry(case, step):
+    """x<->y simetrik kurulumda (warm_bubble) u ve v ayna-simetrik olmali:
+    u(k,j,i) == v(k,i,j). Bagil fark ~roundoff => cekirdekte yon onyargisi yok."""
+    meta = json.loads(Path(f"out/{case}/meta.json").read_text())
+    nx, ny, nz = meta["nx"], meta["ny"], meta["nz"]
+    u = np.fromfile(f"out/{case}/u_{step:06d}.bin", dtype=np.float32).reshape(nz, ny, nx)
+    v = np.fromfile(f"out/{case}/v_{step:06d}.bin", dtype=np.float32).reshape(nz, ny, nx)
+    denom = np.sqrt((u ** 2).mean()) + 1e-12
+    return float(np.sqrt(((u - np.transpose(v, (0, 2, 1))) ** 2).mean()) / denom)
+
+
 CASES = [
     ("warm_bubble", "cases/warm_bubble.ini", [
         ("wmax 16-18 m/s", lambda d: 16.0 <= d["wmax"] <= 18.0),
         ("thmax 1.0-1.3 K", lambda d: 1.0 <= d["thmax"] <= 1.3),
+        ("u-v ayna simetrisi (cekirdek yon-tarafsiz)",
+         lambda d: uv_symmetry("warm_bubble", 667) < 1e-4),
     ]),
     ("straka", "cases/straka.ini", [
         ("thmin -9.6..-8.5 K", lambda d: -9.6 <= d["thmin"] <= -8.5),

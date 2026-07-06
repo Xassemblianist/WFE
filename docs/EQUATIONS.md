@@ -71,6 +71,8 @@ doygunluk ayarlaması (Tetens, tek Newton adımı, gizli ısı → θ').
 | Gerçek tahmin (turkey.ini, GFS 2026-07-04 00Z) | 24h stabil; fizik v1 ile GFS f024'e karşı: θ +%15, u@8km +%23, u@0.9km −%32 (fiziksiz −%48), 3B u −%11 (fiziksiz −%19) | GFS analizi |
 | Pozitif-tanımlı adveksiyon (moist_blob.ini) | qv≥0 makine kesinliğinde (0 negatif hücre); PD kapalı: 5265 negatif hücre, min −0.97 g/kg | analitik (pozitiflik) |
 | Nonlocal PBL (turkey.ini, pbl=nonlocal) | PBLH gündüz döngüsü: kara gece 460m → öğleden sonra 1405m (iç bölge 3600m), deniz ~800m sabit; qv becerisi local'e karşı −%50→−%38 | Troen-Mahrt 1986 / Hong-Pan 1996 |
+| Çekirdek u-v ayna simetrisi (warm_bubble) | x↔y simetrik kurulumda RMS(u−vᵀ)/RMS(u) = 2×10⁻⁶ (makine kesinliği) → dinamik çekirdek yön-tarafsız, yatay momentumda kod asimetrisi yok | analitik (simetri) |
+| Gerçek tahmin + iç nudging (turkey.ini, nudge_tau=6h) | GFS f024: u +%17, qv +%1 persistansı yener, θ RMSE 2.36K; METAR 2m T yanlılık −2.5°C (yüks.düz.), 10m rüzgâr yanlılık ~0 | GFS + METAR |
 
 **Gerçek tahmin notları (Faz 3):** PGF tam θv ile (linearizasyon kaldırıldı);
 Coriolis tam rüzgâra, f(lat) 2D; harita faktörleri henüz yok (m=1, bölgesel
