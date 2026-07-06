@@ -6,8 +6,10 @@ WRF'nin yerini alan, GPU-yerlisi, NOAA GFS verisiyle gerçek tarih-saatli operas
 
 ## Mevcut durum (Faz 4 v1 tamamlandı — FİZİKLİ GERÇEK TAHMİN)
 
-- **Fizik v1**: Louis yüzey katmanı, yerel-K PBL (implicit), levha toprak,
-  basit radyasyon (günlük döngü) → alt seviye rüzgâr becerisi belirgin düzeldi
+- **Fizik**: Louis yüzey katmanı, yerel-K veya **nonlocal (Troen-Mahrt) PBL**
+  (karşı-gradyan + PBL yüksekliği teşhisi), levha toprak, basit radyasyon.
+  Nonlocal PBL ders kitabı gündüz döngüsü üretir, qv becerisini iyileştirir
+- **Pozitif-tanımlı nem adveksiyonu** (Skamarock): negatif su / sahte yağış yok
 
 
 - **Gerçek veri tahmini**: `tools/prep_gfs.py` GFS'i NOMADS'tan indirir, Lambert

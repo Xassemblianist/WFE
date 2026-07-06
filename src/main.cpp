@@ -297,10 +297,11 @@ int main(int argc, char** argv) {
       int hh = std::atoi(st.substr(8, 2).c_str());
       static const int cum[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
       int doy = cum[mo - 1] + dy;
-      phys.init(g, input, (real)hh, doy);
+      bool pbl_nl = cfg.get_str("pbl", "local") == "nonlocal";
+      phys.init(g, input, (real)hh, doy, pbl_nl);
       integ.set_physics(&phys);
-      std::printf("fizik: yuzey katmani + PBL + toprak + radyasyon (doy=%d, %02d UTC)\n",
-                  doy, hh);
+      std::printf("fizik: yuzey + %s PBL + toprak + radyasyon (doy=%d, %02d UTC)\n",
+                  pbl_nl ? "nonlocal" : "yerel-K", doy, hh);
     }
   } else {
     init_bubble(g, cfg, metric, integ.state());
@@ -384,7 +385,10 @@ int main(int argc, char** argv) {
     if (step % out_steps == 0 || step == nsteps) {
       writer.write(integ.state(), step, t);
       if (dp.moisture) writer.write_field2d(integ.rain(), "rain", step);
-      if (phys_on) writer.write_field2d(phys.tsk(), "tsk", step);
+      if (phys_on) {
+        writer.write_field2d(phys.tsk(), "tsk", step);
+        writer.write_field2d(phys.pblh(), "pblh", step);
+      }
     }
   }
   WFE_CUDA_CHECK(cudaDeviceSynchronize());

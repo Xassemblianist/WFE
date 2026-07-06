@@ -56,7 +56,10 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       Brunt ampirik LW, troposferik −2 K/gün LW soğuması
 - [x] Doğrulama: Türkiye 24h yeniden koşusu — alt seviye u becerisi −%48→−%32,
       3B u −%19→−%11, jet +%23, θ +%15; fizik maliyeti ~%16
-- [ ] Nonlocal (YSU sınıfı) PBL + karşı-gradyan terimi
+- [x] Nonlocal PBL ✅ (Troen-Mahrt/Hong-Pan K-profili + karşı-gradyan; `pbl=nonlocal`):
+      bulk-Ri PBL yüksekliği teşhisi, konvektif K=κ·ws·z·(1-z/h)², θ/qv karşı-gradyan.
+      PBLH ders kitabı gündüz döngüsü (kara gece 460m → öğleden sonra 1400m,
+      deniz ~800m sabit); Türkiye qv becerisi −%50→−%38, rüzgâr/θ küçük kazanç
 - [ ] Gerçek kolon radyasyonu (iki-akı/broadband) + toprak nemi (Noah sınıfı)
 - [ ] Üst seviye hatası: harita faktörleri + dikey seviye artırımı
 

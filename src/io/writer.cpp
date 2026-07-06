@@ -35,7 +35,7 @@ void Writer::init(const GDims& g, const std::string& out_dir, real dt, bool mois
   if (moist_)
     std::fprintf(f, ", \"qv\": %d, \"qc\": %d, \"qr\": %d, \"rain\": 1", g.nz, g.nz,
                  g.nz);
-  if (has_tsk) std::fprintf(f, ", \"tsk\": 1");
+  if (has_tsk) std::fprintf(f, ", \"tsk\": 1, \"pblh\": 1");
   std::fprintf(f, "}\n}\n");
   std::fclose(f);
 }

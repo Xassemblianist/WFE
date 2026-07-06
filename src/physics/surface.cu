@@ -28,9 +28,11 @@ constexpr real KM_MAX = (real)1000, KM_MIN = (real)0.1;
 
 // Kolon-implicit dusey difuzyon (Thomas). phi merkez degerleri, Kw w-seviyeleri.
 // src0: k=0'a eklenen yuzey aki kaynagi [birim*kg m-2 s-1] (rho agirlikli).
+// fcg (nullable): w seviyelerinde YUKARI karsi-gradyan akisi (nonlocal PBL);
+// hucre k'ye (fcg[k]-fcg[k+1]) explicit kaynak olarak eklenir.
 __device__ void diffuse_column(int nz, real dt, const real* rho, const real* rhow,
                                const real* dzc, const real* dzw, const real* Kw,
-                               real src0, real* phi) {
+                               real src0, real* phi, const real* fcg = nullptr) {
   real A[SFC_MAX_NZ], B[SFC_MAX_NZ], C[SFC_MAX_NZ], D[SFC_MAX_NZ];
   for (int k = 0; k < nz; ++k) {
     real a = (k > 0) ? rhow[k] * Kw[k] / dzw[k] : (real)0;
@@ -40,6 +42,7 @@ __device__ void diffuse_column(int nz, real dt, const real* rho, const real* rho
     B[k] = m + a + c;
     C[k] = -c;
     D[k] = m * phi[k];
+    if (fcg) D[k] += fcg[k] - fcg[k + 1];
   }
   D[0] += src0;
   // Thomas
@@ -54,10 +57,11 @@ __device__ void diffuse_column(int nz, real dt, const real* rho, const real* rho
 
 // Kutle kolonu: yuzey katmani + radyasyon + toprak + K profili + skalar karisim.
 __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
-                             int doy, real* thp, const real* pip, real* qv,
-                             const real* qc, const real* u, const real* v, real* tsk,
-                             const real* tdeep, const real* land, const real* lat,
-                             const real* lon, real* km, real* cdv) {
+                             int doy, int nonlocal, real* thp, const real* pip,
+                             real* qv, const real* qc, const real* u, const real* v,
+                             real* tsk, const real* tdeep, const real* land,
+                             const real* lat, const real* lon, real* km, real* cdv,
+                             real* pblh) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   int j = blockIdx.y * blockDim.y + threadIdx.y;
   if (i >= g.nx || j >= g.ny) return;
@@ -146,10 +150,8 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
     tsk[c2] = Ts;
   }
 
-  // --- yerel-K profili (Ri bagimli, Louis benzeri) ---
-  Kw[0] = 0;
-  for (int k = 1; k < g.nz; ++k) {
-    int kk = k + g.ng;
+  // yerel-Ri difuzyon katsayisi (serbest atmosfer / kararli kolon fallback)
+  auto local_K = [&](int k) -> real {
     real dz = dzw[k];
     real du = (uc[k] - uc[k - 1]) / dz;
     real dv = (vc[k] - vc[k - 1]) / dz;
@@ -157,24 +159,89 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
     real thvw = (real)0.5 * (thv[k - 1] + thv[k]);
     real N2 = phys::grav / thvw * (thv[k] - thv[k - 1]) / dz;
     real Ri = N2 / S2;
-    real zw = m.zeta_w[kk] * J;  // yuzeyden yukseklik ~ zeta*J
+    real zw = m.zeta_w[k + g.ng] * J;
     real l = KAPPA * zw / ((real)1 + KAPPA * zw / (real)150);
-    real Kv;
-    if (Ri < (real)0)
-      Kv = l * l * sqrt(S2) * sqrt((real)1 - (real)16 * Ri);
-    else {
-      real d = (real)1 + (real)5 * Ri;
-      Kv = l * l * sqrt(S2) / (d * d);
+    if (Ri < (real)0) return l * l * sqrt(S2) * sqrt((real)1 - (real)16 * Ri);
+    real d = (real)1 + (real)5 * Ri;
+    return l * l * sqrt(S2) / (d * d);
+  };
+
+  real fcg_th[SFC_MAX_NZ], fcg_qv[SFC_MAX_NZ];
+  Kw[0] = 0;
+  fcg_th[0] = fcg_qv[0] = fcg_th[g.nz] = fcg_qv[g.nz] = 0;
+
+  if (nonlocal) {
+    // --- nonlocal PBL (Troen-Mahrt / Hong-Pan K-profili + karsi-gradyan) ---
+    real ust = sqrt(Cd) * V1;                       // surtunme hizi u*
+    real thv1 = thv[0];
+    // sanal kinematik yuzey isi akisi (kaldirma uretimi)
+    real wthv0 = shf * ((real)1 + phys::eps61 * qvcol[0]) + phys::eps61 * thcol[0] * qflx;
+
+    const real Ric = (real)0.25;
+    real hpbl = m.zeta_c[(g.nz - 1) + g.ng] * J;
+    real ws = ust > (real)0.1 ? ust : (real)0.1;
+    for (int it = 0; it < 3; ++it) {                // h <-> w* iterasyonu
+      real exc = (wthv0 > (real)0) ? (real)6.8 * wthv0 / ws : (real)0;
+      real thv_s = thv1 + exc;
+      real prevRb = 0;
+      hpbl = m.zeta_c[(g.nz - 1) + g.ng] * J;
+      for (int k = 1; k < g.nz; ++k) {
+        real zc = m.zeta_c[k + g.ng] * J;
+        real shear = uc[k] * uc[k] + vc[k] * vc[k] + (real)0.1;
+        real Rib = phys::grav * (thv[k] - thv_s) * zc / (thv1 * shear);
+        if (Rib >= Ric) {
+          real zcm = m.zeta_c[(k - 1) + g.ng] * J;
+          real f = (Ric - prevRb) / (Rib - prevRb + (real)1e-9);
+          f = fmin((real)1, fmax((real)0, f));
+          hpbl = zcm + f * (zc - zcm);
+          break;
+        }
+        prevRb = Rib;
+      }
+      real zc0 = m.zeta_c[g.ng] * J;
+      if (hpbl < zc0) hpbl = zc0;
+      real wstar = (wthv0 > (real)0) ? cbrt(phys::grav / thv1 * wthv0 * hpbl) : (real)0;
+      ws = cbrt(ust * ust * ust + (real)0.6 * wstar * wstar * wstar);
+      if (ws < (real)0.1) ws = (real)0.1;
     }
-    if (Kv < KM_MIN) Kv = KM_MIN;
-    if (Kv > KM_MAX) Kv = KM_MAX;
-    Kw[k] = Kv;
-    km[gidx(g, i, j, k)] = Kv;
+    pblh[c2] = hpbl;
+
+    real gth = (wthv0 > (real)0) ? (real)6.8 * shf / (ws * hpbl) : (real)0;
+    real gqv = (wthv0 > (real)0) ? (real)6.8 * qflx / (ws * hpbl) : (real)0;
+
+    for (int k = 1; k < g.nz; ++k) {
+      real zw = m.zeta_w[k + g.ng] * J;
+      real Kv;
+      if (wthv0 > (real)0 && zw < hpbl) {           // konvektif BL: nonlocal profil
+        real zf = zw / hpbl;
+        Kv = KAPPA * ws * zw * (1 - zf) * (1 - zf);
+        fcg_th[k] = rhow[k] * Kv * gth;             // yukari karsi-gradyan akisi
+        fcg_qv[k] = rhow[k] * Kv * gqv;
+      } else {                                      // kararli/serbest atmosfer
+        Kv = local_K(k);
+        fcg_th[k] = fcg_qv[k] = 0;
+      }
+      if (Kv < KM_MIN) Kv = KM_MIN;
+      if (Kv > KM_MAX) Kv = KM_MAX;
+      Kw[k] = Kv;
+      km[gidx(g, i, j, k)] = Kv;
+    }
+  } else {
+    // --- yerel-K profili (Faz 4 v1) ---
+    pblh[c2] = 0;
+    for (int k = 1; k < g.nz; ++k) {
+      real Kv = local_K(k);
+      if (Kv < KM_MIN) Kv = KM_MIN;
+      if (Kv > KM_MAX) Kv = KM_MAX;
+      Kw[k] = Kv;
+      km[gidx(g, i, j, k)] = Kv;
+      fcg_th[k] = fcg_qv[k] = 0;
+    }
   }
 
-  // --- skalar dusey karisim (implicit) + yuzey akilari ---
-  diffuse_column(g.nz, dt, rho, rhow, dzc, dzw, Kw, rho[0] * shf, thcol);
-  diffuse_column(g.nz, dt, rho, rhow, dzc, dzw, Kw, rho[0] * qflx, qvcol);
+  // --- skalar dusey karisim (implicit) + yuzey akilari + karsi-gradyan ---
+  diffuse_column(g.nz, dt, rho, rhow, dzc, dzw, Kw, rho[0] * shf, thcol, fcg_th);
+  diffuse_column(g.nz, dt, rho, rhow, dzc, dzw, Kw, rho[0] * qflx, qvcol, fcg_qv);
 
   // troposferik LW sogumasi: -2 K/gun, 11 km ustunde sifira iner
   const real coolrate = (real)-2.31e-5;  // -2 K / 86400 s
@@ -241,9 +308,11 @@ __global__ void k_sfc_v(GDims g, DevProf p, DevMetric m, real dt, real* v,
 
 } // namespace
 
-void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int doy) {
+void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int doy,
+                  bool nonlocal) {
   start_hour_ = start_hour_utc;
   doy_ = doy;
+  nonlocal_ = nonlocal;
   size_t n = g.npts();
   size_t n2 = (size_t)g.NX * g.NY;
   km_.alloc(n);
@@ -253,6 +322,7 @@ void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int 
   lat_.alloc(n2);
   lon_.alloc(n2);
   cdv_.alloc(n2);
+  pblh_.alloc(n2);
 
   auto up2 = [&](Field3D& f, const std::vector<real>& src) {
     std::vector<real> h(n2, 0);
@@ -276,6 +346,7 @@ void SfcPBL::release() {
   lat_.release();
   lon_.release();
   cdv_.release();
+  pblh_.release();
 }
 
 void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt, real t,
@@ -284,9 +355,9 @@ void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt,
   utc = utc - (real)24 * floor(utc / (real)24);
   dim3 b(32, 8);
   dim3 gr((g.nx + 31) / 32, (g.ny + 7) / 8);
-  k_sfc_scalar<<<gr, b>>>(g, p, m, dt, utc, doy_, s.thp.d, s.pip.d, s.qv.d, s.qc.d,
-                          s.u.d, s.v.d, tsk_.d, tdeep_.d, land_.d, lat_.d, lon_.d,
-                          km_.d, cdv_.d);
+  k_sfc_scalar<<<gr, b>>>(g, p, m, dt, utc, doy_, nonlocal_ ? 1 : 0, s.thp.d, s.pip.d,
+                          s.qv.d, s.qc.d, s.u.d, s.v.d, tsk_.d, tdeep_.d, land_.d,
+                          lat_.d, lon_.d, km_.d, cdv_.d, pblh_.d);
   dim3 gu((g.nx - 1 + 31) / 32, (g.ny + 7) / 8);
   k_sfc_u<<<gu, b>>>(g, p, m, dt, s.u.d, km_.d, cdv_.d);
   dim3 gv((g.nx + 31) / 32, (g.ny - 1 + 7) / 8);
