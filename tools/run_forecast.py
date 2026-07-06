@@ -67,7 +67,8 @@ def main():
     if not args.skip_model:
         run([PY, TOOLS / "prep_gfs.py", args.case, "--date", date, "--cycle", cyc,
              "--hours", args.hours])
-        run([Path("build") / "wfe.exe", args.case])
+        # t_end'i istenen tahmin uzunluguna gore ayarla (ini'deki degeri gecersiz kil)
+        run([Path("build") / "wfe.exe", args.case, f"t_end={args.hours * 3600}"])
     run([PY, TOOLS / "forecast_maps.py", args.case])
     run([PY, TOOLS / "to_netcdf.py", args.case])
     run([PY, TOOLS / "verify.py", args.case, "--fhour", args.hours])
