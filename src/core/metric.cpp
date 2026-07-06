@@ -10,7 +10,8 @@
 namespace wfe {
 
 void Metric::build(const GDims& g, const Config& cfg, const std::vector<real>* h_file,
-                   const std::vector<real>* fcor_file) {
+                   const std::vector<real>* fcor_file,
+                   const std::vector<real>* mapf_file) {
   release();
   n1_ = (size_t)g.NZ;
   n2_ = (size_t)g.NX * g.NY;
@@ -132,8 +133,19 @@ void Metric::build(const GDims& g, const Config& cfg, const std::vector<real>* h
       }
   }
 
-  // tek tampon: 4 dikey [n1] + 7 yatay [n2]
-  size_t total = 4 * n1_ + 7 * n2_;
+  // Harita olcek faktoru: dosyadan (Lambert) veya idealize'de 1 (etkisiz)
+  std::vector<real> mf(n2_, (real)1);
+  if (mapf_file) {
+    auto clampi = [&](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    for (int j = -g.ng; j < g.ny + g.ng; ++j)
+      for (int i = -g.ng; i < g.nx + g.ng; ++i) {
+        int ic = clampi(i, 0, g.nx - 1), jc = clampi(j, 0, g.ny - 1);
+        mf[idx2(g, i, j)] = (*mapf_file)[(size_t)jc * g.nx + ic];
+      }
+  }
+
+  // tek tampon: 4 dikey [n1] + 8 yatay [n2]
+  size_t total = 4 * n1_ + 8 * n2_;
   WFE_CUDA_CHECK(cudaMalloc(&d_all_, total * sizeof(real)));
   size_t off = 0;
   auto up = [&](const std::vector<real>& v) {
@@ -152,6 +164,7 @@ void Metric::build(const GDims& g, const Config& cfg, const std::vector<real>* h
   up(hyv);
   up(h_jac);
   up(fc);
+  up(mf);
 }
 
 void Metric::release() {
@@ -175,6 +188,7 @@ DevMetric Metric::dev() const {
   m.hy_v = d_all_ + off; off += n2_;
   m.jac = d_all_ + off; off += n2_;
   m.fcor = d_all_ + off; off += n2_;
+  m.mapf = d_all_ + off; off += n2_;
   m.zt = zt_;
   return m;
 }

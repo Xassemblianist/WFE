@@ -43,7 +43,10 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [x] İlk gerçek tahmin: Türkiye 24h @ 12 km, 52 s duvar zamanı (1671× gerçek-zaman);
       doğrulama GFS f024'e karşı: θ persistansı +%14, jet seviyesi u +%20 yener;
       alt seviyeler PBL fiziksiz kaybeder (Faz 4 gerekçesi)
-- [ ] Harita faktörleri mx,my (şu an m=1 yaklaşımı; Türkiye alanında ~%1-2 hata)
+- [x] Harita faktörleri ✅ (izotropik Lambert m; akustik PGF + süreklilik):
+      m(lat) standart paralellerde tam 1, Türkiye'de 0.998-1.003 (etki ~%0.3,
+      alan küçük); idealize m=1 bit-özdeş (schaer_rest tam sıfır). Advection
+      m-ölçekleme + ∂m/∂x higher-order (aynı %2 mertebe) olarak bırakıldı
 - [ ] Statik arazi tipi/albedo alanları (Faz 4 yüzey fiziğiyle birlikte)
 
 ## Faz 4 — Fizik parametrizasyonları (v1 ✅ 2026-07-04)

@@ -25,6 +25,7 @@ struct DevMetric {
   const real* hy_v;     // [NX*NY] dh/dy v noktalarinda
   const real* jac;      // [NX*NY] J = (zt-h)/zt merkez kolonlarda
   const real* fcor;     // [NX*NY] Coriolis parametresi f(lat) [1/s]
+  const real* mapf;     // [NX*NY] harita olcek faktoru m (izotropik konformal; idealize=1)
   real zt;              // model tepesi [m]
 };
 
@@ -40,7 +41,8 @@ class Metric {
  public:
   void build(const GDims& g, const Config& cfg,
              const std::vector<real>* h_file = nullptr,
-             const std::vector<real>* fcor_file = nullptr);
+             const std::vector<real>* fcor_file = nullptr,
+             const std::vector<real>* mapf_file = nullptr);
   void release();
   DevMetric dev() const;
 

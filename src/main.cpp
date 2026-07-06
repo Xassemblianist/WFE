@@ -269,9 +269,28 @@ int main(int argc, char** argv) {
     dp.coriolis_use_ub = false;  // gercek veri: Coriolis tam ruzgara etkir
   }
 
+  // Lambert konformal harita olcek faktoru m(lat) (izotropik; grid/dunya mesafe orani).
+  // Yatay turevler m ile olceklenir; standart paralellerde m=1. Idealize'de yok (m=1).
+  std::vector<real> mapf;
+  if (file_mode) {
+    double phi1 = cfg.get_real("proj_lat1", 35) * 0.01745329252;
+    double phi2 = cfg.get_real("proj_lat2", 43) * 0.01745329252;
+    const double PI4 = 0.78539816339;
+    double n = (std::fabs(phi1 - phi2) < 1e-6)
+                   ? std::sin(phi1)
+                   : std::log(std::cos(phi1) / std::cos(phi2)) /
+                         std::log(std::tan(PI4 + phi2 / 2) / std::tan(PI4 + phi1 / 2));
+    double A = std::cos(phi1) * std::pow(std::tan(PI4 + phi1 / 2), n);
+    mapf.resize((size_t)g.nx * g.ny);
+    for (size_t idx = 0; idx < mapf.size(); ++idx) {
+      double phi = input.lat[idx] * 0.01745329252;
+      mapf[idx] = (real)(A / (std::pow(std::tan(PI4 + phi / 2), n) * std::cos(phi)));
+    }
+  }
+
   Metric metric;
   metric.build(g, cfg, file_mode ? &input.h : nullptr,
-               file_mode ? &input.fcor : nullptr);
+               file_mode ? &input.fcor : nullptr, file_mode ? &mapf : nullptr);
 
   BaseState base;
   ProfileTables tables{&input.prof_z, &input.prof_th, &input.prof_qv, &input.prof_u};

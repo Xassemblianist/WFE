@@ -498,7 +498,8 @@ __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dt
 
   if (!(dp.bc_x_open && i == 0)) {
     real thbu = (real)0.5 * (thv(i - 1, j) + thv(i, j));
-    real grad = (ps0 - ps(i - 1, j, k)) / g.dx;
+    real mu = (real)0.5 * (m.mapf[g2(g, i - 1, j)] + m.mapf[g2(g, i, j)]);
+    real grad = (ps0 - ps(i - 1, j, k)) / g.dx;  // harita faktoru: gercek yatay gradyan
     real zxu = m.hx_u[g2(g, i, j)] * ((real)1 - m.zeta_c[kk] / m.zt);
     if (zxu != (real)0) {
       real ju = (real)0.5 * (m.jac[g2(g, i - 1, j)] + m.jac[g2(g, i, j)]);
@@ -507,10 +508,11 @@ __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dt
                    (ps(i, j, k + 1) - ps(i, j, k - 1))) / dzc2;
       grad -= zxu / ju * dpdz;
     }
-    u[gidx(g, i, j, k)] += dtau * (-phys::cp * thbu * grad + tu[gidx(g, i, j, k)]);
+    u[gidx(g, i, j, k)] += dtau * (-phys::cp * thbu * mu * grad + tu[gidx(g, i, j, k)]);
   }
   if (!(dp.bc_y_open && j == 0)) {
     real thbv = (real)0.5 * (thv(i, j - 1) + thv(i, j));
+    real mv = (real)0.5 * (m.mapf[g2(g, i, j - 1)] + m.mapf[g2(g, i, j)]);
     real grad = (ps0 - ps(i, j - 1, k)) / g.dy;
     real zyv = m.hy_v[g2(g, i, j)] * ((real)1 - m.zeta_c[kk] / m.zt);
     if (zyv != (real)0) {
@@ -520,7 +522,7 @@ __global__ void k_acou_uv(GDims g, DevProf p, DevMetric m, DynParams dp, real dt
                    (ps(i, j, k + 1) - ps(i, j, k - 1))) / dzc2;
       grad -= zyv / jv * dpdz;
     }
-    v[gidx(g, i, j, k)] += dtau * (-phys::cp * thbv * grad + tv[gidx(g, i, j, k)]);
+    v[gidx(g, i, j, k)] += dtau * (-phys::cp * thbv * mv * grad + tv[gidx(g, i, j, k)]);
   }
 }
 
@@ -569,10 +571,11 @@ __global__ void k_acou_wpi(GDims g, DevProf p, DevMetric m, DynParams dp, real d
     int kk = k + g.ng;
     size_t c = gidx(g, i, j, k);
     real Kt = kt3[c];
-    real Dh = (rtjx[gidx(g, i + 1, j, k)] * u[gidx(g, i + 1, j, k)] -
-               rtjx[c] * u[gidx(g, i, j, k)]) / g.dx +
-              (rtjy[gidx(g, i, j + 1, k)] * v[gidx(g, i, j + 1, k)] -
-               rtjy[c] * v[gidx(g, i, j, k)]) / g.dy;
+    real mc = m.mapf[g2(g, i, j)];  // harita faktoru: yatay kutle diverjansi (PGF ile tutarli)
+    real Dh = mc * ((rtjx[gidx(g, i + 1, j, k)] * u[gidx(g, i + 1, j, k)] -
+                     rtjx[c] * u[gidx(g, i, j, k)]) / g.dx +
+                    (rtjy[gidx(g, i, j + 1, k)] * v[gidx(g, i, j + 1, k)] -
+                     rtjy[c] * v[gidx(g, i, j, k)]) / g.dy);
     real dzc = m.dzeta_c[kk];
     real wk = w[gidx(g, i, j, k)];
     real wkp = w[gidx(g, i, j, k + 1)];
