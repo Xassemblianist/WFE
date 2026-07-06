@@ -16,6 +16,7 @@ Gereksinim: numpy, eccodes (pip install eccodes)
 """
 
 import argparse
+import json
 import math
 import sys
 import time
@@ -175,6 +176,37 @@ def qsat_of(p, T):
     return 0.622 * es / np.maximum(p - es, 1.0)
 
 
+def sample_hires_terrain(prep_dir, plat, plon, cell_m):
+    """Yuksek coz. DEM'i (AWS terrarium mozaik) model gridine alan-ortalamali
+    ornekle. Web Mercator piksel -> kutu-yumusatma (hucre boyutu) -> bilinear."""
+    meta = json.loads((Path(prep_dir) / "terrain.json").read_text())
+    z = meta["zoom"]
+    dem = np.fromfile(Path(prep_dir) / "terrain.bin",
+                      dtype=np.float32).reshape(meta["ny_px"], meta["nx_px"])
+    TILE = 256
+    n = TILE * 2 ** z
+    latm = np.radians(plat.mean())
+    pix_m = 40075016.0 * math.cos(latm) / n            # piksel boyutu [m]
+    w = max(1, int(round(cell_m / pix_m)))             # hucre = kac piksel
+    # ayrilabilir kutu-yumusatma (integral goruntu ile hizli)
+    k = np.ones(w) / w
+    sm = dem
+    for ax in (0, 1):
+        sm = np.apply_along_axis(lambda r: np.convolve(r, k, mode="same"), ax, sm)
+    # model noktalari -> global piksel -> yerel piksel
+    gx = (plon + 180.0) / 360.0 * n - meta["xtile0"] * TILE
+    latr = np.radians(plat)
+    gy = (1 - np.log(np.tan(latr) + 1 / np.cos(latr)) / np.pi) / 2 * n \
+        - meta["ytile0"] * TILE
+    gx = np.clip(gx, 0, sm.shape[1] - 1.001)
+    gy = np.clip(gy, 0, sm.shape[0] - 1.001)
+    i0 = gx.astype(int); j0 = gy.astype(int)
+    fx = gx - i0; fy = gy - j0
+    h = ((1 - fy) * ((1 - fx) * sm[j0, i0] + fx * sm[j0, i0 + 1]) +
+         fy * ((1 - fx) * sm[j0 + 1, i0] + fx * sm[j0 + 1, i0 + 1]))
+    return np.maximum(h, 0.0)
+
+
 def smooth121(a, npass=2):
     for _ in range(npass):
         b = a.copy()
@@ -260,10 +292,15 @@ def main():
     # arazi + yuzey alanlari: f000'den
     f0 = download(args.date, args.cycle, 0, cache, bbox)
     fields0, lats, lons = read_grib(f0)
-    h = bilinear(fields0[("orog", "surface")], lats, lons, plat, plon)
-    h = smooth121(h, npass=2)
-    h = np.maximum(h, 0.0)
-    print(f"arazi: {h.min():.0f}..{h.max():.0f} m")
+    if cfg.get("terrain_source", "gfs") == "tiles":
+        h = sample_hires_terrain(outdir, plat, plon, dx)   # yuksek coz. DEM
+        h = smooth121(h, npass=1)                          # hafif: metrik stabilite
+        print(f"arazi (yuksek coz. DEM): {h.min():.0f}..{h.max():.0f} m")
+    else:
+        h = bilinear(fields0[("orog", "surface")], lats, lons, plat, plon)
+        h = smooth121(h, npass=2)
+        h = np.maximum(h, 0.0)
+        print(f"arazi (GFS orografisi): {h.min():.0f}..{h.max():.0f} m")
 
     fcor = 2 * OMEGA * np.sin(np.radians(plat))
     tsk = bilinear(fields0[("t", "surface")], lats, lons, plat, plon)

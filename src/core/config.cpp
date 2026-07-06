@@ -52,7 +52,8 @@ std::vector<std::string> Config::unused() const {
   std::vector<std::string> out;
   for (const auto& [k, v] : kv_) {
     if (used_.count(k)) continue;
-    if (k.rfind("proj_", 0) == 0) continue;  // yalniz prep_gfs.py okur
+    if (k.rfind("proj_", 0) == 0) continue;    // yalniz prep_gfs.py okur
+    if (k == "terrain_source") continue;       // yalniz prep/get_terrain okur
     out.push_back(k);
   }
   return out;

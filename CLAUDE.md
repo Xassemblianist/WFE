@@ -23,8 +23,14 @@ build\wfe.exe cases\warm_bubble.ini
 Görselleştirme: `python tools\plot_slice.py <out_dir> --var thp --step <N>` (numpy+matplotlib gerekir).
 
 Operasyonel gerçek tahmin (tek komut): `python tools\run_forecast.py cases\turkey.ini --hours 24`
-(gereken pip paketleri: numpy matplotlib eccodes cartopy netCDF4 xarray; Python
-`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`). Doğrulama: `tools\verify.py`.
+(gereken pip paketleri: numpy matplotlib eccodes cartopy netCDF4 xarray Pillow; Python
+`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`). Doğrulama: `tools\verify.py`
+(GFS), `tools\verify_metar.py` (istasyon, yükseklik-düzeltmeli), `tools\verify_multi.py`
+(çok-döngü). Topluluk: `tools\run_ensemble.py`.
+
+Yüksek çözünürlüklü yerel model (ör. Antalya 2.5km): önce yüksek çöz. arazi indir
+`python tools\get_terrain.py cases\antalya.ini` (AWS Terrain Tiles, anahtarsız), sonra
+`prep_gfs.py` (terrain_source=tiles ile GFS orografisi yerine kullanır) + `wfe.exe`.
 
 ## Test
 

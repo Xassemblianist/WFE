@@ -111,6 +111,21 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       atmosferik-baskın olduğundan); regresyon yok, WRF-Noah muadili altyapı
 - [ ] Toprak nemi difüzyonu + bitki örtüsü (tam Noah) — çok-günlük tahminler için
 
+## Faz 7 — Yüksek çözünürlüklü yerel model ✅ (2026-07-06)
+
+- [x] Yüksek çöz. gerçek arazi (tools/get_terrain.py): AWS Terrain Tiles
+      (terrarium, anahtarsız açık veri, ~30-90m) indirme + RGB→yükseklik decode
+      + Web Mercator mozaik; prep alan-ortalamalı model gridine interpole eder
+- [x] cases/antalya.ini: 2.5 km, Antalya körfezi + Toros (arazi 0→2588m çözülür;
+      GFS 28km bunu ~1000m'ye ezerdi), akustik CFL'e uygun dt=9s, sınır-sürüklü
+      (nudge_tau=0 → iç bölge terrain detayını serbest geliştirir)
+- [x] Doğrulama: dik Toros arazisinde STABİL (|w|~12-17 m/s, patlama yok);
+      **orografik detay** üretir (kıyı-dağ sıcaklık kontrastı 6-30°C, arazi-kilitli
+      orografik yağış, arazi-kanalize rüzgâr) — 12km'nin göremediği; METAR (Antalya
+      istasyonları): 2m T RMSE 2.3°C (kaba koşudan daha iyi — arazi doğru çözülür)
+- [ ] İki-yönlü nesting (12km ↔ 2.5km çift yönlü besleme) — tek-yönlü hazır
+- [ ] Sub-km çözünürlük (LES yaklaşımı) — daha güçlü GPU ile
+
 ## Faz 6 — Performans (v1 ✅ 2026-07-04)
 
 - [x] Yerleşik profilci (`WFE_PROF=1`): bölüm bazlı GPU-senkron zamanlar
