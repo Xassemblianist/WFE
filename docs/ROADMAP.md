@@ -94,7 +94,11 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       levha ısı kapasitesi düşürüldü; verify_metar'a yükseklik (lapse) düzeltmesi
       eklendi. Etkin yanlılık −5.7 (ham) → −4.2°C (yüks.düz.). Kalan ~4°C spin-down/
       denge sorunu → Noah-sınıfı toprak modeli + çok-vakalı kalibrasyon (gelecek)
-- [ ] Noah-sınıfı toprak modeli (çok katmanlı, GFS TSOIL init) — 2m yanlılığı için
+- [x] Çok katmanlı toprak modeli ✅ (Noah-benzeri, 4 katman 0.1/0.3/0.6/1.0m,
+      implicit 1B ısı difüzyonu; tek levha yerine): doğru ısı iletimi + ısıl
+      bellek + fiziksel toprak profili. 24h headline etkisi marjinal (2m yanlılığı
+      atmosferik-baskın olduğundan); regresyon yok, WRF-Noah muadili altyapı
+- [ ] Toprak nemi difüzyonu + bitki örtüsü (tam Noah) — çok-günlük tahminler için
 
 ## Faz 6 — Performans (v1 ✅ 2026-07-04)
 

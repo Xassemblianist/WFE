@@ -23,8 +23,13 @@ using thermo::qsat_tetens;
 constexpr real KAPPA = (real)0.4;
 constexpr real SIGMA = (real)5.67e-8;
 constexpr real S0 = (real)1361;
-constexpr real CSOIL = (real)9.0e4;   // levha toprak isi kapasitesi [J m-2 K-1] (~0.25m)
 constexpr real KM_MAX = (real)1000, KM_MIN = (real)0.1;
+
+// Cok katmanli toprak (Noah-benzeri): 4 katman, hacimsel isi kap. + iletkenlik.
+constexpr int NSOIL = 4;
+__constant__ real SOIL_DZ[NSOIL] = {(real)0.1, (real)0.3, (real)0.6, (real)1.0};  // [m]
+constexpr real SOIL_C = (real)2.2e6;  // hacimsel isi kapasitesi [J m-3 K-1] (nemli)
+constexpr real SOIL_K = (real)1.5;    // isil iletkenlik [W m-1 K-1]
 
 // Kolon-implicit dusey difuzyon (Thomas). phi merkez degerleri, Kw w-seviyeleri.
 // src0: k=0'a eklenen yuzey aki kaynagi [birim*kg m-2 s-1] (rho agirlikli).
@@ -61,7 +66,8 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
                              real* qv, const real* qc, const real* u, const real* v,
                              real* tsk, const real* tdeep, const real* land,
                              const real* lat, const real* lon, const real* soilw,
-                             real* km, real* cdv, real* pblh, real* t2m, real* u10) {
+                             real* km, real* cdv, real* pblh, real* t2m, real* u10,
+                             real* soilt, size_t n2plane) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   int j = blockIdx.y * blockDim.y + threadIdx.y;
   if (i >= g.nx || j >= g.ny) return;
@@ -188,15 +194,40 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
     radht[k] = net / (rho[k] * phys::cp * dzc[k]) / pik;      // theta hizi [K/s]
   }
 
-  // --- levha toprak ---
+  // --- cok katmanli toprak (Noah-benzeri isi iletimi) ---
   real lwu = (real)0.97 * SIGMA * Ts * Ts * Ts * Ts;
   real G = swn + (real)0.97 * lwd - lwu - rho[0] * phys::cp * shf * pi1 -
-           rho[0] * phys::Lv * qflx;
+           rho[0] * phys::Lv * qflx;                       // yuzeye net aki [W/m2]
   if (onland) {
-    Ts += dt * (G / CSOIL - (real)7.27e-5 * (Ts - tdeep[c2]));
-    if (Ts < (real)200) Ts = 200;
-    if (Ts > (real)340) Ts = 340;
-    tsk[c2] = Ts;
+    // 4 katman implicit 1B isi difuzyonu (Thomas). Ust: G akisi; alt: sabit Tdeep.
+    real Tso[NSOIL], A[NSOIL], B[NSOIL], C[NSOIL], D[NSOIL];
+    for (int L = 0; L < NSOIL; ++L) Tso[L] = soilt[(size_t)L * n2plane + c2];
+    for (int L = 0; L < NSOIL; ++L) {
+      real cap = SOIL_C * SOIL_DZ[L] / dt;
+      // katman arayuz iletim katsayilari (kat L ile L+1 arasi)
+      real ku = (L > 0) ? SOIL_K / ((real)0.5 * (SOIL_DZ[L - 1] + SOIL_DZ[L])) : (real)0;
+      real kl = (L < NSOIL - 1) ? SOIL_K / ((real)0.5 * (SOIL_DZ[L] + SOIL_DZ[L + 1]))
+                                : SOIL_K / SOIL_DZ[L];  // alt: Tdeep'e
+      A[L] = -ku;
+      C[L] = (L < NSOIL - 1) ? -kl : (real)0;
+      B[L] = cap + ku + kl;
+      D[L] = cap * Tso[L];
+    }
+    D[0] += G;                                    // ust sinir: yuzey isi akisi
+    D[NSOIL - 1] += (SOIL_K / SOIL_DZ[NSOIL - 1]) * tdeep[c2];  // alt: Tdeep
+    for (int L = 1; L < NSOIL; ++L) {
+      real w = A[L] / B[L - 1];
+      B[L] -= w * C[L - 1];
+      D[L] -= w * D[L - 1];
+    }
+    Tso[NSOIL - 1] = D[NSOIL - 1] / B[NSOIL - 1];
+    for (int L = NSOIL - 2; L >= 0; --L) Tso[L] = (D[L] - C[L] * Tso[L + 1]) / B[L];
+    for (int L = 0; L < NSOIL; ++L) {
+      if (Tso[L] < (real)200) Tso[L] = 200;
+      if (Tso[L] > (real)350) Tso[L] = 350;
+      soilt[(size_t)L * n2plane + c2] = Tso[L];
+    }
+    tsk[c2] = Tso[0];                             // yuzey = ust toprak katmani
   }
 
   // yerel-Ri difuzyon katsayisi (serbest atmosfer / kararli kolon fallback)
@@ -373,6 +404,7 @@ void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int 
   pblh_.alloc(n2);
   t2m_.alloc(n2);
   u10_.alloc(n2);
+  soilt_.alloc(4 * n2);  // 4 toprak katmani
 
   auto up2 = [&](Field3D& f, const std::vector<real>& src) {
     std::vector<real> h(n2, 0);
@@ -387,6 +419,15 @@ void SfcPBL::init(const GDims& g, const InputData& in, real start_hour_utc, int 
   up2(lat_, in.lat);
   up2(lon_, in.lon);
   up2(soilw_, in.soilw);
+
+  // toprak katmanlari: baslangicta hepsi GFS yuzey sicakligi (ilk saatlerde dengelenir)
+  std::vector<real> hs(4 * n2, 0);
+  for (int L = 0; L < 4; ++L)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i)
+        hs[(size_t)L * n2 + (size_t)(j + g.ng) * g.NX + (i + g.ng)] =
+            in.tsk[(size_t)j * g.nx + i];
+  soilt_.upload(hs.data());
 }
 
 void SfcPBL::release() {
@@ -401,6 +442,7 @@ void SfcPBL::release() {
   pblh_.release();
   t2m_.release();
   u10_.release();
+  soilt_.release();
 }
 
 void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt, real t,
@@ -412,7 +454,7 @@ void SfcPBL::step(const GDims& g, const DevProf& p, const DevMetric& m, real dt,
   k_sfc_scalar<<<gr, b>>>(g, p, m, dt, utc, doy_, nonlocal_ ? 1 : 0, s.thp.d, s.pip.d,
                           s.qv.d, s.qc.d, s.u.d, s.v.d, tsk_.d, tdeep_.d, land_.d,
                           lat_.d, lon_.d, soilw_.d, km_.d, cdv_.d, pblh_.d,
-                          t2m_.d, u10_.d);
+                          t2m_.d, u10_.d, soilt_.d, (size_t)g.NX * g.NY);
   dim3 gu((g.nx - 1 + 31) / 32, (g.ny + 7) / 8);
   k_sfc_u<<<gu, b>>>(g, p, m, dt, s.u.d, km_.d, cdv_.d);
   dim3 gv((g.nx + 31) / 32, (g.ny - 1 + 7) / 8);

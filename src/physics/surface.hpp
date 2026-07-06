@@ -37,6 +37,7 @@ class SfcPBL {
   Field3D cdv_;                             // 2D Cd*|V1| (momentum icin)
   Field3D pblh_;                            // 2D PBL yuksekligi (nonlocal) [m]
   Field3D t2m_, u10_;                        // 2D 2m sicaklik / 10m ruzgar tanilari
+  Field3D soilt_;                            // 4 katmanli toprak sicakligi (4*NX*NY)
   real start_hour_ = 0;
   int doy_ = 1;
   bool nonlocal_ = false;
