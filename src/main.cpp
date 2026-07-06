@@ -306,7 +306,7 @@ int main(int argc, char** argv) {
   if (file_mode) {
     init_from_input(g, base, input, integ.state());
     bdy.init(g, dp, &input, base.h_thb3, base.h_pib3, cfg.get_int("bdy_width", 8),
-             cfg.get_real("bdy_tau", 600));
+             cfg.get_real("bdy_tau", 600), cfg.get_real("nudge_tau", 0));
     integ.set_boundary(&bdy);
     if (cfg.get_str("physics", "none") == "simple") {
       // start = YYYYMMDDHH: gun-of-year + UTC saat

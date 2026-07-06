@@ -79,6 +79,14 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       API'sinden gerçek istasyon gözlemi, model 2m T / 10m rüzgâr en-yakın eşleme.
       İlk sonuç (07-06 12Z, 337 istasyon): 10m rüzgâr bias +0.3 RMSE 2.9 m/s (iyi);
       2m T bias −5.7°C (öğle soğuk yanlılığı → levha ısıl ataleti; gelecek ayar)
+- [x] İç bölge analiz-nudging ✅ (`nudge_tau`, GFS-güdümlü LAM standardı): Davies
+      kenar relaksasyonuna zayıf iç taban (1/nudge_tau) eklenir; büyük ölçekler
+      GFS'e bağlı, küçük ölçekler serbest. Türkiye 6h nudging: u −%21→**+%17**,
+      qv −%72→**+%1** (persistansı yener), θ RMSE 2.9→2.36; METAR 2m T yanlılığı
+      −4.2→**−2.5°C**, 10m rüzgâr yanlılığı ~0. Tüm skill metriklerinde büyük kazanç
+- [x] (negatif sonuç) Dikey çözünürlük nz=40→56 test edildi: GFS skill'i
+      iyileştirmedi (rüzgâr/θ marjinal kötü, %45 yavaş) → üst-seviye hatası
+      çözünürlük-kaynaklı değil; geri alındı
 - [ ] Nesting (iç içe alan) — opsiyonel
 - [ ] Zamanlanmış otomatik koşular (görev zamanlayıcı)
 - [~] 2m sıcaklık soğuk yanlılığı — kısmen ele alındı (2026-07-06): SW su buharı

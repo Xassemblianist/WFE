@@ -8,7 +8,7 @@ namespace wfe {
 
 void BdyManager::init(const GDims& g, const DynParams& dp, const InputData* input,
                       const std::vector<real>& thb3, const std::vector<real>& pib3,
-                      int bdy_width, real bdy_tau) {
+                      int bdy_width, real bdy_tau, real nudge_tau) {
   g_ = g;
   input_ = input;
   thb3_ = &thb3;
@@ -21,18 +21,23 @@ void BdyManager::init(const GDims& g, const DynParams& dp, const InputData* inpu
   wgt_.alloc((size_t)g.NX * g.NY);
   hbuf_.assign(n, 0);
 
-  // 2D katsayi alani (yalniz acik kenarlarda)
+  // 2D relaksasyon katsayisi: kenarda Davies (cos^2/bdy_tau), ic bolgede
+  // zayif analiz-nudging tabani (1/nudge_tau; 0 kapali). GFS-guducu LAM'de
+  // ic bolgenin buyuk-olcek surklenmesini kisitlar (WRF analiz nudging).
+  real inner = (nudge_tau > (real)0) ? (real)1 / nudge_tau : (real)0;
   std::vector<real> w((size_t)g.NX * g.NY, 0);
   const real pi_half = (real)1.5707963267948966;
   for (int j = 0; j < g.ny; ++j)
     for (int i = 0; i < g.nx; ++i) {
+      real wij = inner;
       int dist = 1 << 20;
       if (dp.bc_x_open) dist = std::min({dist, i, g.nx - 1 - i});
       if (dp.bc_y_open) dist = std::min({dist, j, g.ny - 1 - j});
       if (dist < bdy_width) {
         real s = std::cos(pi_half * (real)dist / (real)bdy_width);
-        w[(size_t)(j + g.ng) * g.NX + (i + g.ng)] = s * s / bdy_tau;
+        wij = std::max(wij, s * s / bdy_tau);
       }
+      w[(size_t)(j + g.ng) * g.NX + (i + g.ng)] = wij;
     }
   wgt_.upload(w.data());
 

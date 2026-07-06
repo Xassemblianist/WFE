@@ -17,7 +17,7 @@ class BdyManager {
  public:
   void init(const GDims& g, const DynParams& dp, const InputData* input,
             const std::vector<real>& thb3, const std::vector<real>& pib3,
-            int bdy_width, real bdy_tau);
+            int bdy_width, real bdy_tau, real nudge_tau);
   void update(real t);        // gerekirse sonraki sinir dosyasina gec
   real tfrac(real t) const;
   bool active() const { return input_ != nullptr; }
