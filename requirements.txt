@@ -1,0 +1,11 @@
+# WFE Python araç + servis bağımlılıkları (model C++/CUDA ayrı derlenir)
+numpy
+matplotlib
+eccodes
+cartopy
+netCDF4
+xarray
+Pillow
+# API servisi
+fastapi
+uvicorn[standard]

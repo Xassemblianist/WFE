@@ -1,0 +1,8 @@
+build/
+build64/
+out/
+.git/
+__pycache__/
+*.png
+*.bin
+.vs/
