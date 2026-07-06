@@ -73,6 +73,7 @@ doygunluk ayarlaması (Tetens, tek Newton adımı, gizli ısı → θ').
 | Nonlocal PBL (turkey.ini, pbl=nonlocal) | PBLH gündüz döngüsü: kara gece 460m → öğleden sonra 1405m (iç bölge 3600m), deniz ~800m sabit; qv becerisi local'e karşı −%50→−%38 | Troen-Mahrt 1986 / Hong-Pan 1996 |
 | Çekirdek u-v ayna simetrisi (warm_bubble) | x↔y simetrik kurulumda RMS(u−vᵀ)/RMS(u) = 2×10⁻⁶ (makine kesinliği) → dinamik çekirdek yön-tarafsız, yatay momentumda kod asimetrisi yok | analitik (simetri) |
 | Gerçek tahmin + iç nudging (turkey.ini, nudge_tau=6h) | GFS f024: u +%17, qv +%1 persistansı yener, θ RMSE 2.36K; METAR 2m T yanlılık −2.5°C (yüks.düz.), 10m rüzgâr yanlılık ~0 | GFS + METAR |
+| Çok-döngülü doğrulama (3 döngü: 07-04 12Z, 07-05 00/12Z) | u **her döngüde** persistansı yener (+%14/+%18/+%17 — robust); v/u hata oranı 1.24-1.73 (ort 1.49, sabit 2× DEĞİL → kod bug'ı yok, simetri testiyle tutarlı; hafif-sistematik v zaafiyeti + vaka bağımlılığı, zonal akış rejimi) | GFS f024 (çok vaka) |
 
 **Gerçek tahmin notları (Faz 3):** PGF tam θv ile (linearizasyon kaldırıldı);
 Coriolis tam rüzgâra, f(lat) 2D; harita faktörleri henüz yok (m=1, bölgesel
