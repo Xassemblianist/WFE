@@ -103,23 +103,25 @@ def main():
         qc = ld("qc", step)
         qr = ld("qr", step)
         rain = ld2("rain", step)
-        tsk = ld2("tsk", step)
+        t2m = ld2("t2m", step)
+        u10 = ld2("u10", step)
 
         fig = plt.figure(figsize=(15, 9))
         sk = max(nx // 24, 1)
         qv_kw = dict(color="k", width=0.0022)
 
-        # 1) yuzey sicakligi + alt seviye ruzgar
+        # 1) 2m sicaklik + 10m ruzgar (standart yuzey tahmin urunu)
         ax, tr = make_ax(fig, 1)
-        if tsk is not None:
-            fld, label = tsk - 273.15, "yuzey sicakligi [C]"
+        if t2m is not None:
+            fld, label = t2m - 273.15, "2m sicaklik [C]"
         else:
             fld, label = thp[0], "theta' k=0 [K]"
         cf = ax.contourf(plon, plat, fld, levels=16, cmap="turbo", **tr)
+        # 10m ruzgar yonu icin alt-seviye u,v kullan (u10 skaler hiz)
         ax.quiver(plon[::sk, ::sk], plat[::sk, ::sk], u[0, ::sk, ::sk],
                   v[0, ::sk, ::sk], **qv_kw, **tr)
         plt.colorbar(cf, ax=ax, shrink=0.85, label=label)
-        ax.set_title(f"yuzey sicakligi + alt ruzgar  t+{fh:.0f}h")
+        ax.set_title(f"2m sicaklik + yuzey ruzgar  t+{fh:.0f}h")
 
         # 2) orta seviye jet
         ax, tr = make_ax(fig, 2)
