@@ -15,6 +15,7 @@ namespace wfe {
 class Config {
  public:
   bool load(const std::string& path);
+  void set(const std::string& key, const std::string& val) { kv_[key] = val; }
   bool has(const std::string& key) const { return kv_.count(key) > 0; }
   real get_real(const std::string& key, real def) const;
   int get_int(const std::string& key, int def) const;

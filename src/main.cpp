@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -96,6 +97,50 @@ void init_from_input(const GDims& g, const BaseState& base, const InputData& in,
     for (int j = 0; j < g.ny; ++j)
       for (int i = 0; i < g.nx; ++i) h[g.idx(i, j, k)] = src(in.qv, i, j, k);
   s.qv.upload(h.data());
+}
+
+// Topluluk (ensemble) baslangic pertubasyonu: dusuk-genlikli mekansal-korelasyonlu
+// theta' gurultusu (beyaz gurultu + kutu yumusatma), hedef RMS'e olceklenir.
+// Uyeler arasi farklilik saglar -> belirsizlik kantifikasyonu.
+void add_ic_perturbation(const GDims& g, State& s, real amp, unsigned seed) {
+  if (amp <= (real)0) return;
+  size_t n = g.npts();
+  std::vector<real> p(n, 0), tmp(n, 0);
+  std::mt19937 rng(seed);
+  std::normal_distribution<float> nd(0.f, 1.f);
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) p[g.idx(i, j, k)] = (real)nd(rng);
+  // birkac 3B kutu-yumusatma gecisi (~5 hucre korelasyon uzunlugu)
+  for (int pass = 0; pass < 6; ++pass) {
+    tmp = p;
+    for (int k = 1; k < g.nz - 1; ++k)
+      for (int j = 1; j < g.ny - 1; ++j)
+        for (int i = 1; i < g.nx - 1; ++i) {
+          real s6 = tmp[g.idx(i - 1, j, k)] + tmp[g.idx(i + 1, j, k)] +
+                    tmp[g.idx(i, j - 1, k)] + tmp[g.idx(i, j + 1, k)] +
+                    tmp[g.idx(i, j, k - 1)] + tmp[g.idx(i, j, k + 1)];
+          p[g.idx(i, j, k)] = (real)(0.5 * tmp[g.idx(i, j, k)] + s6 / 12.0);
+        }
+  }
+  double ss = 0;
+  size_t cnt = 0;
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) {
+        double v = p[g.idx(i, j, k)];
+        ss += v * v;
+        ++cnt;
+      }
+  real rms = (real)std::sqrt(ss / cnt);
+  if (rms < (real)1e-9) return;
+  std::vector<real> thp(n);
+  s.thp.download(thp.data());
+  real sc = amp / rms;
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) thp[g.idx(i, j, k)] += sc * p[g.idx(i, j, k)];
+  s.thp.upload(thp.data());
 }
 
 // Baslangic nemi: qv = taban profili q̄v.
@@ -206,6 +251,12 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "config okunamadi: %s\n", cfg_path.c_str());
     return 1;
   }
+  // komut satiri override'lari: wfe.exe case.ini key=val key=val ...
+  for (int a = 2; a < argc; ++a) {
+    std::string s = argv[a];
+    size_t eq = s.find('=');
+    if (eq != std::string::npos) cfg.set(s.substr(0, eq), s.substr(eq + 1));
+  }
 
   int nx = cfg.get_int("nx", 100);
   int ny = cfg.get_int("ny", 100);
@@ -305,6 +356,8 @@ int main(int argc, char** argv) {
   SfcPBL phys;
   if (file_mode) {
     init_from_input(g, base, input, integ.state());
+    add_ic_perturbation(g, integ.state(), cfg.get_real("ic_perturb", 0),
+                        (unsigned)cfg.get_int("ens_seed", 0));
     bdy.init(g, dp, &input, base.h_thb3, base.h_pib3, cfg.get_int("bdy_width", 8),
              cfg.get_real("bdy_tau", 600), cfg.get_real("nudge_tau", 0));
     integ.set_boundary(&bdy);
