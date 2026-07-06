@@ -89,6 +89,15 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [x] (negatif sonuç) Dikey çözünürlük nz=40→56 test edildi: GFS skill'i
       iyileştirmedi (rüzgâr/θ marjinal kötü, %45 yavaş) → üst-seviye hatası
       çözünürlük-kaynaklı değil; geri alındı
+- [x] Topluluk (ensemble) tahmini ✅ (tools/run_ensemble.py): IC θ' korelasyonlu
+      pertürbasyon, N üye, ortalama + yayılım. Yayılım deseni fiziksel (konvektif/
+      dağlık belirsizlik yüksek, deniz düşük). θ'-only az-dağılımlı; tam ensemble gelecek
+- [x] Uzatılmış menzil 48h ✅: stabil, GFS f048'de u +%53/θ +%14 (persistansı yener)
+- [~] Cumulus parametrizasyonu — DEĞERLENDİRİLDİ/ERTELENDİ: 12km gri-bölgede konveksiyon
+      zaten kısmen çözülüyor; cumulus çift-sayım riski + faydası yağış gözlemi olmadan
+      doğrulanamaz → iyi-ayarlı sistemi bozma riski değmez
+- [~] Spektral/PBL-üstü seçici nudging — DEĞERLENDİRİLDİ/ERTELENDİ: uniform nudging
+      2m'yi BL'yi GFS'e çekerek iyileştiriyor; BL'yi serbest bırakmak kazancı kaybettirir
 - [ ] Nesting (iç içe alan) — opsiyonel
 - [ ] Zamanlanmış otomatik koşular (görev zamanlayıcı)
 - [~] 2m sıcaklık soğuk yanlılığı — kısmen ele alındı (2026-07-06): SW su buharı
