@@ -5,3 +5,5 @@ __pycache__/
 *.png
 .vs/
 build64/
+deploy/config.env
+server/__pycache__/
