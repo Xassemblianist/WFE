@@ -81,7 +81,12 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       2m T bias −5.7°C (öğle soğuk yanlılığı → levha ısıl ataleti; gelecek ayar)
 - [ ] Nesting (iç içe alan) — opsiyonel
 - [ ] Zamanlanmış otomatik koşular (görev zamanlayıcı)
-- [ ] 2m sıcaklık soğuk yanlılığı: levha ısı kapasitesi/gündüz ısınma ayarı (çok vakalı)
+- [~] 2m sıcaklık soğuk yanlılığı — kısmen ele alındı (2026-07-06): SW su buharı
+      soğurma katsayısı düzeltildi (0.02→0.008, ~3x fazlaydı), LW opaklık artırıldı,
+      levha ısı kapasitesi düşürüldü; verify_metar'a yükseklik (lapse) düzeltmesi
+      eklendi. Etkin yanlılık −5.7 (ham) → −4.2°C (yüks.düz.). Kalan ~4°C spin-down/
+      denge sorunu → Noah-sınıfı toprak modeli + çok-vakalı kalibrasyon (gelecek)
+- [ ] Noah-sınıfı toprak modeli (çok katmanlı, GFS TSOIL init) — 2m yanlılığı için
 
 ## Faz 6 — Performans (v1 ✅ 2026-07-04)
 

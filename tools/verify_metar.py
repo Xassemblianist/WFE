@@ -62,10 +62,11 @@ def main():
     valid = dtm.datetime.strptime(start, "%Y%m%d%H").replace(
         tzinfo=dtm.timezone.utc) + dtm.timedelta(hours=args.fhour)
 
-    # model istasyon eslemesi icin lat/lon (prep wfe_init.bin'den)
+    # model istasyon eslemesi icin lat/lon + arazi yuksekligi (prep wfe_init.bin'den)
     npf = int(imeta["np_prof"])
     raw = np.fromfile(prep / "wfe_init.bin", dtype=np.float32)
     n2 = nx * ny
+    hgt = raw[4 * npf:4 * npf + n2].reshape(ny, nx)          # model arazi yuksekligi [m]
     o = 4 * npf + 2 * n2 + 2 * n2  # z,th,qv,u + h,fcor + tsk,land
     plat = raw[o:o + n2].reshape(ny, nx); o += n2
     plon = raw[o:o + n2].reshape(ny, nx); o += n2
@@ -92,7 +93,9 @@ def main():
     print(f"gecerli zamana yakin {len(obs)} gozlem eslendi")
 
     latf, lonf = plat.ravel(), plon.ravel()
-    dT, dW, nT, nW = [], [], 0, 0
+    hgtf = hgt.ravel()
+    LAPSE = 0.0065  # K/m — istasyon-model yukseklik farki icin duzeltme
+    dT, dTr, dW, nT, nW = [], [], [], 0, 0
     for o in obs:
         try:
             slat, slon = float(o["lat"]), float(o["lon"])
@@ -105,21 +108,31 @@ def main():
         jj, ii = divmod(idx, nx)
         temp = o.get("temp")
         if temp is not None:
-            dT.append(t2m[jj, ii] - 273.15 - float(temp))
+            raw_d = t2m[jj, ii] - 273.15 - float(temp)
+            dT.append(raw_d)
+            # yukseklik duzeltmesi: model hucresini istasyon yuksekligine indir
+            selev = o.get("elev")
+            if selev is not None:
+                corr = t2m[jj, ii] + LAPSE * (hgtf[idx] - float(selev))
+                dTr.append(corr - 273.15 - float(temp))
             nT += 1
         ws = o.get("wspd")  # knot
         if ws is not None:
             dW.append(u10[jj, ii] - float(ws) * 0.514444)
             nW += 1
 
-    print(f"\n{'alan':14s} {'bias':>8s} {'RMSE':>8s} {'N':>5s}")
+    print(f"\n{'alan':22s} {'bias':>8s} {'RMSE':>8s} {'N':>5s}")
     if nT:
         dT = np.array(dT)
-        print(f"{'2m sicaklik':14s} {dT.mean():+8.2f} {np.sqrt((dT**2).mean()):8.2f} "
+        print(f"{'2m sicaklik (ham)':22s} {dT.mean():+8.2f} {np.sqrt((dT**2).mean()):8.2f} "
               f"{nT:5d}   C")
+    if dTr:
+        dTr = np.array(dTr)
+        print(f"{'2m sicaklik (yuks.duz.)':22s} {dTr.mean():+8.2f} "
+              f"{np.sqrt((dTr**2).mean()):8.2f} {len(dTr):5d}   C")
     if nW:
         dW = np.array(dW)
-        print(f"{'10m ruzgar':14s} {dW.mean():+8.2f} {np.sqrt((dW**2).mean()):8.2f} "
+        print(f"{'10m ruzgar':22s} {dW.mean():+8.2f} {np.sqrt((dW**2).mean()):8.2f} "
               f"{nW:5d}   m/s")
 
 

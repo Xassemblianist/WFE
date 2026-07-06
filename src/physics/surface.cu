@@ -23,7 +23,7 @@ using thermo::qsat_tetens;
 constexpr real KAPPA = (real)0.4;
 constexpr real SIGMA = (real)5.67e-8;
 constexpr real S0 = (real)1361;
-constexpr real CSOIL = (real)1.4e5;   // levha toprak isi kapasitesi [J m-2 K-1]
+constexpr real CSOIL = (real)9.0e4;   // levha toprak isi kapasitesi [J m-2 K-1] (~0.25m)
 constexpr real KM_MAX = (real)1000, KM_MIN = (real)0.1;
 
 // Kolon-implicit dusey difuzyon (Thomas). phi merkez degerleri, Kw w-seviyeleri.
@@ -151,7 +151,8 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
     Tlev[k] = thcol[k] * pik;
     real du = rho[k] * qvcol[k] * dzc[k];                    // su buhari yolu
     real dl = rho[k] * (qc[c] > (real)0 ? qc[c] : (real)0) * dzc[k] * (real)1000;
-    epslw[k] = (real)1 - exp(-((real)0.10 * du + (real)0.20 * dl));
+    // nemli alt atmosfer LW'de opak (yuzeye asagi LW; dusuk katsayi -> asiri sogur)
+    epslw[k] = (real)1 - exp(-((real)0.22 * du + (real)0.30 * dl));
   }
   // uzun dalga: asagi (tepeden) sonra yukari (yuzeyden)
   Fdn[g.nz] = (real)0;                                        // model tepesinde ~0
@@ -165,13 +166,14 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
                  epslw[k] * SIGMA * Tlev[k] * Tlev[k] * Tlev[k] * Tlev[k];
   // kisa dalga: tek isin, su buhari + bulut soguurma
   real mu = fmax(cosz, (real)0.05);
-  real Sdn = S0 * cosz * (real)0.92;                          // model tepesi (ozon/rayleigh sonrasi)
+  real Sdn = S0 * cosz * (real)0.95;                          // model tepesi (ozon/rayleigh sonrasi)
   real swabs[SFC_MAX_NZ];
   for (int k = g.nz - 1; k >= 0; --k) {
     size_t c = gidx(g, i, j, k);
     real du = rho[k] * qvcol[k] * dzc[k];
     real dl = rho[k] * (qc[c] > (real)0 ? qc[c] : (real)0) * dzc[k] * (real)1000;
-    real tau = exp(-((real)0.02 * du + (real)0.15 * dl) / mu);
+    // broadband SW su buhari soguurma katsayisi (~toplam OD 0.2/25kg -> 0.008)
+    real tau = exp(-((real)0.008 * du + (real)0.15 * dl) / mu);
     real ab = Sdn * ((real)1 - tau);
     swabs[k] = ab;
     Sdn *= tau;
