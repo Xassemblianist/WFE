@@ -83,7 +83,9 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       kenar relaksasyonuna zayıf iç taban (1/nudge_tau) eklenir; büyük ölçekler
       GFS'e bağlı, küçük ölçekler serbest. Türkiye 6h nudging: u −%21→**+%17**,
       qv −%72→**+%1** (persistansı yener), θ RMSE 2.9→2.36; METAR 2m T yanlılığı
-      −4.2→**−2.5°C**, 10m rüzgâr yanlılığı ~0. Tüm skill metriklerinde büyük kazanç
+      −4.2→**−2.5°C**, 10m rüzgâr yanlılığı ~0. Tüm skill metriklerinde büyük kazanç.
+      Güç ayarı çok-vaka + bağımsız METAR ile: 3h > 6h (θ −%1→+%7, u +%17→+%30;
+      METAR 2m RMSE 4.47→4.15) → tautolojik değil, gerçek kazanç. nudge_tau=3h varsayılan
 - [x] (negatif sonuç) Dikey çözünürlük nz=40→56 test edildi: GFS skill'i
       iyileştirmedi (rüzgâr/θ marjinal kötü, %45 yavaş) → üst-seviye hatası
       çözünürlük-kaynaklı değil; geri alındı
