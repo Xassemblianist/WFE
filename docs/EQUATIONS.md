@@ -33,7 +33,10 @@ doygunluk ayarlaması (Tetens, tek Newton adımı, gizli ısı → θ').
 **Bilinçli yaklaşımlar:**
 - π' adveksiyonu ihmal (KW78 standardı); π' denkleminde nem kaynak terimi yok.
 - cp, Rd kuru hava değerleri (nem düzeltmesi θ̄v üzerinden).
-- Nem adveksiyonu pozitif-tanımlı değil (negatifler mikrofizikte kırpılır).
+- Nem adveksiyonu opsiyonel pozitif-tanımlı (`pd_moist`, Skamarock 2006): yüksek
+  mertebe akılar hücre başına çıkan kütle mevcut kütleyi aşmayacak şekilde upwind
+  oranıyla renormalize edilir → qv,qc,qr ≥ 0 garanti, kütle korunur (telescoping),
+  sahte negatif su ve Gibbs aşımları kalkar. Kapalıyken negatifler mikrofizikte kırpılır.
 - Pertürbasyon formu sayesinde durağan atmosfer arazi üstünde TAM korunur
   (schaer_rest testi: |w| = 0.0, makine kesinliğinde).
 
@@ -66,6 +69,7 @@ doygunluk ayarlaması (Tetens, tek Newton adımı, gizli ısı → θ').
 | Schär dağ dalgası (schaer.ini) | küçük ölçek evanescent, büyük ölçek yukarı yayılan eğik faz; w_max≈1.5-1.9 m/s | Schär 2002 |
 | WK82 süperhücre (wk82_supercell.ini) | fırtına bölünmesi (ayna-simetrik çift), w_max 40-48 m/s, çift yağış şeridi, stratosferik taşan tepeler | Weisman-Klemp 1982 |
 | Gerçek tahmin (turkey.ini, GFS 2026-07-04 00Z) | 24h stabil; fizik v1 ile GFS f024'e karşı: θ +%15, u@8km +%23, u@0.9km −%32 (fiziksiz −%48), 3B u −%11 (fiziksiz −%19) | GFS analizi |
+| Pozitif-tanımlı adveksiyon (moist_blob.ini) | qv≥0 makine kesinliğinde (0 negatif hücre); PD kapalı: 5265 negatif hücre, min −0.97 g/kg | analitik (pozitiflik) |
 
 **Gerçek tahmin notları (Faz 3):** PGF tam θv ile (linearizasyon kaldırıldı);
 Coriolis tam rüzgâra, f(lat) 2D; harita faktörleri henüz yok (m=1, bölgesel

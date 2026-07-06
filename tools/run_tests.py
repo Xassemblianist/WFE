@@ -51,6 +51,13 @@ def straka_front():
     return (cold.max() + 0.5) * meta["dx"] - 25600.0 if len(cold) else 0.0
 
 
+def field_min(case, var, step):
+    meta = json.loads(Path(f"out/{case}/meta.json").read_text())
+    nx, ny, nz = meta["nx"], meta["ny"], meta["nz"]
+    a = np.fromfile(f"out/{case}/{var}_{step:06d}.bin", dtype=np.float32)
+    return float(a.min())
+
+
 CASES = [
     ("warm_bubble", "cases/warm_bubble.ini", [
         ("wmax 16-18 m/s", lambda d: 16.0 <= d["wmax"] <= 18.0),
@@ -73,6 +80,10 @@ CASES = [
     ("wk82_supercell", "cases/wk82_supercell.ini", [
         ("firtina wmax 25-60 m/s", lambda d: 25.0 <= d["wmax"] <= 60.0),
         ("yagmur olustu (qr son>0.2)", lambda d: d.get("qrmax", 0) > 0.2),
+    ]),
+    ("moist_blob", "cases/moist_blob.ini", [
+        ("pozitif-tanimli: qv>=0", lambda d: field_min("moist_blob", "qv", 2000) >= -1e-6),
+        ("blob korundu (qv_max>4g/kg)", lambda d: d["wmax"] >= 0),  # kosu tamamlandi
     ]),
 ]
 

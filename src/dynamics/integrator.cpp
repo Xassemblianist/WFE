@@ -64,6 +64,7 @@ void Integrator::init(const GDims& g, const DevProf& prof, const DevMetric& m,
   mfy_.alloc(n);
   mfz_.alloc(n);
   rain_.alloc((size_t)g.NX * g.NY);
+  if (dp_.pd_moist) pd_.alloc(n);
   precompute_acoustic_coef(g_, prof_, m_, acoef_, div_);  // div_ gecici tampon
 }
 
@@ -82,7 +83,8 @@ void Integrator::step(real dt, real t) {
     compute_mass_fluxes(g_, prof_, m_, est, mfx_, mfy_, mfz_);
     compute_divergence(g_, m_, mfx_, mfy_, mfz_, div_);
     tic.toc(&ptimes_[P_MF]);
-    compute_tendencies(g_, prof_, m_, dp_, dt, est, mfx_, mfy_, mfz_, div_, tend_);
+    compute_tendencies(g_, prof_, m_, dp_, dt, est, mfx_, mfy_, mfz_, div_, tend_,
+                        dp_.pd_moist ? &pd_ : nullptr);
     tic.toc(&ptimes_[P_TEND]);
     if (bdy_ && bdy_->active())
       bdy_relax(g_, est, bdy_->lo_, bdy_->hi_, bdy_->tfrac(t), bdy_->wgt_, tend_);
@@ -102,7 +104,7 @@ void Integrator::step(real dt, real t) {
   }
   s_n_.swap(s_stage_);
   Tic tic(prof_on_);
-  if (dp_.moisture) kessler_step(g_, prof_, m_, dt, s_n_, rain_);
+  if (dp_.moisture && dp_.microphysics) kessler_step(g_, prof_, m_, dt, s_n_, rain_);
   tic.toc(&ptimes_[P_KESSLER]);
   if (phys_) phys_->step(g_, prof_, m_, dt, t + dt, s_n_);
   tic.toc(&ptimes_[P_PHYS]);

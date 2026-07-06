@@ -178,6 +178,91 @@ __global__ void k_tend_q(GDims g, DevProf p, DevMetric m, const real* q,
   tend[gidx(g, i, j, k)] = (-fdiv + Q(i, j, k) * div[gidx(g, i, j, k)]) / rt;
 }
 
+// ---------------------------------------- pozitif-tanimli nem adveksiyonu
+// Skamarock (2006) akı renormalizasyonu: 5. mertebe skalar akilari sinirla ki
+// hicbir hucre bir zaman adiminda sahip oldugundan fazla kutle kaybetmesin.
+// Boylece negatif su ve sahte asimlar (Gibbs) fiziksel bicimde onlenir.
+// Aki F, sol yuz konvansiyonu: F[gidx(i,j,k)] = (i-1/2) yuzeyindeki aki.
+
+__global__ void k_qflux_x(GDims g, const real* q, const real* mfx, real* Fx) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;       // 0..nx (yuzler)
+  int j = blockIdx.y * blockDim.y + threadIdx.y;
+  int k = blockIdx.z * blockDim.z + threadIdx.z;
+  if (i > g.nx || j >= g.ny || k >= g.nz) return;
+  auto Q = [&](int ii) { return q[gidx(g, ii, j, k)]; };
+  real f = mfx[gidx(g, i, j, k)];
+  Fx[gidx(g, i, j, k)] =
+      f * iface5(Q(i - 3), Q(i - 2), Q(i - 1), Q(i), Q(i + 1), Q(i + 2), f);
+}
+
+__global__ void k_qflux_y(GDims g, const real* q, const real* mfy, real* Fy) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int j = blockIdx.y * blockDim.y + threadIdx.y;       // 0..ny
+  int k = blockIdx.z * blockDim.z + threadIdx.z;
+  if (i >= g.nx || j > g.ny || k >= g.nz) return;
+  auto Q = [&](int jj) { return q[gidx(g, i, jj, k)]; };
+  real f = mfy[gidx(g, i, j, k)];
+  Fy[gidx(g, i, j, k)] =
+      f * iface5(Q(j - 3), Q(j - 2), Q(j - 1), Q(j), Q(j + 1), Q(j + 2), f);
+}
+
+__global__ void k_qflux_z(GDims g, const real* q, const real* mfz, real* Fz) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int j = blockIdx.y * blockDim.y + threadIdx.y;
+  int k = blockIdx.z * blockDim.z + threadIdx.z;       // 0..nz
+  if (i >= g.nx || j >= g.ny || k > g.nz) return;
+  auto Q = [&](int kz) { return q[gidx(g, i, j, kz)]; };
+  real f = mfz[gidx(g, i, j, k)];
+  Fz[gidx(g, i, j, k)] =
+      f * iface5(Q(k - 3), Q(k - 2), Q(k - 1), Q(k), Q(k + 1), Q(k + 2), f);
+}
+
+// Her hucre icin cikan akı orani; ratio = min(1, mevcut kutle / cikan kutle).
+__global__ void k_pd_ratio(GDims g, DevProf p, DevMetric m, real dt, const real* q,
+                           const real* Fx, const real* Fy, const real* Fz,
+                           real* ratio) {
+  WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
+  int kk = k + g.ng;
+  real dzc = m.dzeta_c[kk];
+  // cikan kutle orani: her yuzde hucreden AYRILAN aki (>0)
+  real out = fmax((real)0, Fx[gidx(g, i + 1, j, k)]) / g.dx +   // sag yuz, +x'e cikis
+             fmax((real)0, -Fx[gidx(g, i, j, k)]) / g.dx +      // sol yuz, -x'e cikis
+             fmax((real)0, Fy[gidx(g, i, j + 1, k)]) / g.dy +
+             fmax((real)0, -Fy[gidx(g, i, j, k)]) / g.dy +
+             fmax((real)0, Fz[gidx(g, i, j, k + 1)]) / dzc +
+             fmax((real)0, -Fz[gidx(g, i, j, k)]) / dzc;
+  real avail = p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)] *
+               fmax((real)0, q[gidx(g, i, j, k)]);
+  real r = (dt * out > (real)1e-20) ? avail / (dt * out) : (real)1;
+  ratio[gidx(g, i, j, k)] = fmin((real)1, r);
+}
+
+// Renormalize edilmis aki diverjansi + tutarlilik terimi -> tend.
+__global__ void k_pd_apply(GDims g, DevProf p, DevMetric m, const real* q,
+                           const real* Fx, const real* Fy, const real* Fz,
+                           const real* mfdiv, const real* ratio, real* tend) {
+  WFE_IJK_GUARD(g.nx, g.ny, 0, g.nz)
+  int kk = k + g.ng;
+  // her yuz, kutle KAYBEDEN (upwind) hucrenin orani ile olceklenir
+  auto sx = [&](int i0) {
+    real f = Fx[gidx(g, i0, j, k)];
+    return f * ratio[gidx(g, f >= (real)0 ? i0 - 1 : i0, j, k)];
+  };
+  auto sy = [&](int j0) {
+    real f = Fy[gidx(g, i, j0, k)];
+    return f * ratio[gidx(g, i, f >= (real)0 ? j0 - 1 : j0, k)];
+  };
+  auto sz = [&](int k0) {
+    real f = Fz[gidx(g, i, j, k0)];
+    return f * ratio[gidx(g, i, j, f >= (real)0 ? k0 - 1 : k0)];
+  };
+  real fdiv = (sx(i + 1) - sx(i)) / g.dx + (sy(j + 1) - sy(j)) / g.dy +
+              (sz(k + 1) - sz(k)) / m.dzeta_c[kk];
+  real rt = p.rhob[gidx(g, i, j, k)] * m.jac[g2(g, i, j)];
+  tend[gidx(g, i, j, k)] =
+      (-fdiv + q[gidx(g, i, j, k)] * mfdiv[gidx(g, i, j, k)]) / rt;
+}
+
 // Asama sonunda nem skalarlarinin guncellenmesi: out = s0 + dt * tend
 // (nem turlerinin hizli terimi yok; akustik donguye girmezler).
 __global__ void k_stage_q(const real* s0, const real* tend, real dt, real* out,
@@ -762,10 +847,29 @@ void compute_divergence(const GDims& g, const DevMetric& m, const Field3D& mfx,
   check_kernel("compute_divergence");
 }
 
+namespace {
+// Bir nem skalarini pozitif-tanimli sema ile tasi (5 kernel: 3 aki + oran + uygula).
+void advect_pd(const GDims& g, const DevProf& p, const DevMetric& m, const DynParams& dp,
+               real dt, const real* q, const Field3D& mfx, const Field3D& mfy,
+               const Field3D& mfz, const Field3D& div, PDScratch& pd, real* tend) {
+  dim3 blk = tile_block();
+  k_qflux_x<<<tile_grid(g.nx + 1, g.ny, g.nz), blk>>>(g, q, mfx.d, pd.fx.d);
+  k_qflux_y<<<tile_grid(g.nx, g.ny + 1, g.nz), blk>>>(g, q, mfy.d, pd.fy.d);
+  k_qflux_z<<<tile_grid(g.nx, g.ny, g.nz + 1), blk>>>(g, q, mfz.d, pd.fz.d);
+  k_pd_ratio<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dt, q, pd.fx.d, pd.fy.d,
+                                                   pd.fz.d, pd.ratio.d);
+  // oran ghost'lari: yanal periyodik/sifir-gradyan (upwind hucre sinirda ghost olabilir)
+  bc_lateral_x(g, dp, pd.ratio.d, g.nx - 1);
+  bc_lateral_y(g, dp, pd.ratio.d, g.ny - 1);
+  k_pd_apply<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, q, pd.fx.d, pd.fy.d, pd.fz.d,
+                                                   div.d, pd.ratio.d, tend);
+}
+} // namespace
+
 void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
                         const DynParams& dp, real dt, const State& s,
                         const Field3D& mfx, const Field3D& mfy, const Field3D& mfz,
-                        const Field3D& div, State& tend) {
+                        const Field3D& div, State& tend, PDScratch* pd) {
   DevState ds = dev_state(s);
   dim3 blk = tile_block();
   k_tend_u<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
@@ -777,12 +881,18 @@ void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
   k_tend_thp<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, dp, ds, mfx.d, mfy.d, mfz.d,
                                                    div.d, tend.thp.d);
   if (dp.moisture) {
-    k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qv.d, mfx.d, mfy.d,
-                                                   mfz.d, div.d, tend.qv.d);
-    k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qc.d, mfx.d, mfy.d,
-                                                   mfz.d, div.d, tend.qc.d);
-    k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qr.d, mfx.d, mfy.d,
-                                                   mfz.d, div.d, tend.qr.d);
+    if (dp.pd_moist && pd) {
+      advect_pd(g, p, m, dp, dt, s.qv.d, mfx, mfy, mfz, div, *pd, tend.qv.d);
+      advect_pd(g, p, m, dp, dt, s.qc.d, mfx, mfy, mfz, div, *pd, tend.qc.d);
+      advect_pd(g, p, m, dp, dt, s.qr.d, mfx, mfy, mfz, div, *pd, tend.qr.d);
+    } else {
+      k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qv.d, mfx.d, mfy.d,
+                                                     mfz.d, div.d, tend.qv.d);
+      k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qc.d, mfx.d, mfy.d,
+                                                     mfz.d, div.d, tend.qc.d);
+      k_tend_q<<<tile_grid(g.nx, g.ny, g.nz), blk>>>(g, p, m, s.qr.d, mfx.d, mfy.d,
+                                                     mfz.d, div.d, tend.qr.d);
+    }
   }
   // pi' yavas egilimi: adveksiyon yok; sinir relaksasyonu sonradan ekleyebilir
   tend.pip.zero();

@@ -108,6 +108,35 @@ void init_moisture(const GDims& g, const BaseState& base, State& s) {
   s.qv.upload(h.data());
 }
 
+// Idealize nem blobu (cos^2, keskin kenar): pozitif-tanimli adveksiyon testi.
+// qvbub_dq = 0 ise atlanir.
+void init_qv_blob(const GDims& g, const Config& cfg, const Metric& metric, State& s) {
+  real dq = cfg.get_real("qvbub_dq", (real)0);
+  if (dq == (real)0) return;
+  real xc = cfg.get_real("qvbub_xc", g.nx * g.dx / 4);
+  real yc = cfg.get_real("qvbub_yc", g.ny * g.dy / 2);
+  real zc = cfg.get_real("qvbub_zc", (real)2000);
+  real xr = cfg.get_real("qvbub_xr", (real)2000);
+  real yr = cfg.get_real("qvbub_yr", (real)1e9);
+  real zr = cfg.get_real("qvbub_zr", (real)2000);
+  std::vector<real> h(g.npts(), 0);
+  const real pi = (real)3.14159265358979323846;
+  for (int k = 0; k < g.nz; ++k)
+    for (int j = 0; j < g.ny; ++j)
+      for (int i = 0; i < g.nx; ++i) {
+        real x = ((real)i + (real)0.5) * g.dx;
+        real y = ((real)j + (real)0.5) * g.dy;
+        real z = metric.z_at(g, i, j, metric.h_zeta_c[k + g.ng]);
+        real rx = (x - xc) / xr, ry = (y - yc) / yr, rz = (z - zc) / zr;
+        real r = std::sqrt(rx * rx + ry * ry + rz * rz);
+        if (r < (real)1) {
+          real c = std::cos(pi * r / 2);
+          h[g.idx(i, j, k)] = dq * c * c;
+        }
+      }
+  s.qv.upload(h.data());
+}
+
 // Baslangic ruzgari = taban ruzgar profili (u yuzleri 0..nx dahil).
 void init_wind(const GDims& g, const BaseState& base, State& s) {
   std::vector<real> h(g.npts(), 0);
@@ -214,6 +243,8 @@ int main(int argc, char** argv) {
   dp.cstar = cfg.get_real("cstar", 30);
   dp.w_damping = cfg.get_str("w_damping", "off") == "on";
   dp.w_abort = cfg.get_real("w_abort", 150);
+  dp.pd_moist = cfg.get_str("pd_moist", "off") == "on";
+  dp.microphysics = cfg.get_str("microphysics", "on") == "on";
 
   // akustik CFL kontrolu: en hizli ses dalgasi yatay alt-adimi sinirlar
   {
@@ -245,7 +276,9 @@ int main(int argc, char** argv) {
   BaseState base;
   ProfileTables tables{&input.prof_z, &input.prof_th, &input.prof_qv, &input.prof_u};
   base.build(g, cfg, metric, file_mode ? &tables : nullptr);
-  dp.moisture = base.has_moisture();
+  bool qv_blob = cfg.get_real("qvbub_dq", 0) != (real)0;
+  dp.moisture = base.has_moisture() || qv_blob;
+  if (!dp.moisture) dp.pd_moist = false;  // nem yoksa PD anlamsiz
 
   Integrator integ;
   integ.init(g, base.dev(), metric.dev(), dp);
@@ -273,6 +306,7 @@ int main(int argc, char** argv) {
     init_bubble(g, cfg, metric, integ.state());
     init_wind(g, base, integ.state());
     init_moisture(g, base, integ.state());
+    init_qv_blob(g, cfg, metric, integ.state());
   }
 
   Writer writer;

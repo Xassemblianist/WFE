@@ -28,8 +28,10 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
 - [x] WK82 sounding (nem + tanh rüzgâr kesmesi)
 - [x] Doğrulama: WK82 süperhücre — fırtına bölünmesi (ayna-simetrik sağ/sol
       hareketli), w_max 40-48 m/s, yağış şeritleri; kuru regresyonlar birebir
+- [x] Pozitif-tanımlı nem adveksiyonu ✅ (Skamarock 2006 akı renorm.; `pd_moist`):
+      moist_blob testi 5265 negatif hücre → 0 (qv≥0 makine kesinliğinde); Türkiye
+      koşusunda sahte hafif yağış −%15, gerçek çekirdekler keskinleşti (183→272 mm)
 - [ ] WSM6 sınıfı buz mikrofiziği (kar/graupel; kış yağışları için — Faz 4 ile)
-- [ ] Pozitif-tanımlı nem adveksiyonu (5. mertebe şemanın alt-aşımlarını keser)
 
 ## Faz 3 — Gerçek veri: WPS muadili ✅ (2026-07-04, harita faktörleri hariç)
 

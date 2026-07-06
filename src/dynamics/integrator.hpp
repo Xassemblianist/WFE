@@ -34,6 +34,7 @@ class Integrator {
   State s_n_, s_stage_, s_work_, tend_;
   Field3D div_, piprev_, mfx_, mfy_, mfz_, rain_;
   AcousticCoef acoef_;
+  PDScratch pd_;  // pozitif-tanimli nem adveksiyonu scratch (yalniz pd_moist)
   BdyManager* bdy_ = nullptr;
   class SfcPBL* phys_ = nullptr;
   bool prof_on_ = false;

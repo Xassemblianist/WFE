@@ -22,12 +22,24 @@ void compute_mass_fluxes(const GDims& g, const DevProf& p, const DevMetric& m,
 void compute_divergence(const GDims& g, const DevMetric& m, const Field3D& mfx,
                         const Field3D& mfy, const Field3D& mfz, Field3D& div);
 
+// Pozitif-tanimli nem adveksiyonu icin scratch alanlari (skalar akilari + oran).
+struct PDScratch {
+  Field3D fx, fy, fz, ratio;
+  void alloc(size_t n) {
+    fx.alloc(n);
+    fy.alloc(n);
+    fz.alloc(n);
+    ratio.alloc(n);
+  }
+};
+
 // YAVAS egilimler: adveksiyon (kutle akilariyla) + difuzyon + Coriolis +
-// Rayleigh. Hizli terimler akustik alt-adimlarda.
+// Rayleigh. Hizli terimler akustik alt-adimlarda. pd != null ve dp.pd_moist
+// ise nem turleri pozitif-tanimli sema ile tasinir.
 void compute_tendencies(const GDims& g, const DevProf& p, const DevMetric& m,
                         const DynParams& dp, real dt, const State& s,
                         const Field3D& mfx, const Field3D& mfy, const Field3D& mfz,
-                        const Field3D& div, State& tend);
+                        const Field3D& div, State& tend, PDScratch* pd = nullptr);
 
 // Akustik cozucunun kosu boyunca sabit katsayi alanlari (Faz 6 performans):
 // bir kez hesaplanir, her alt-adimda yeniden turetim yerine okunur.
