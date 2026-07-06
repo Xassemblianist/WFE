@@ -123,6 +123,11 @@ koşulu alıp Türkiye ve çevresi için gerçek tarih-saatli tahmin üretmek.
       **orografik detay** üretir (kıyı-dağ sıcaklık kontrastı 6-30°C, arazi-kilitli
       orografik yağış, arazi-kanalize rüzgâr) — 12km'nin göremediği; METAR (Antalya
       istasyonları): 2m T RMSE 2.3°C (kaba koşudan daha iyi — arazi doğru çözülür)
+- [x] 1 km konveksiyon-çözücü (cases/antalya1km.ini, zoom-11 arazi 0→2755m):
+      en dik Toros'ta STABİL (|w| sınırlı, sıkı akustik CFL dt=4s); model 12km→1km
+      tüm operasyonel ölçek aralığında çalışır (WRF en-ince-nest rejimi)
+- [x] Operasyonel entegrasyon: run_forecast.py yüksek çöz. için get_terrain'i
+      otomatik çağırır (tek komut: arazi→prep→koşu→ürünler)
 - [ ] İki-yönlü nesting (12km ↔ 2.5km çift yönlü besleme) — tek-yönlü hazır
 - [ ] Sub-km çözünürlük (LES yaklaşımı) — daha güçlü GPU ile
 

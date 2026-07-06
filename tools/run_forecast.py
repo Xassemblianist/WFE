@@ -14,6 +14,16 @@ import sys
 import urllib.request
 from pathlib import Path
 
+
+def read_ini(path):
+    kv = {}
+    for line in Path(path).read_text().splitlines():
+        line = line.split("#")[0].split(";")[0]
+        if "=" in line:
+            k, v = line.split("=", 1)
+            kv[k.strip()] = v.strip()
+    return kv
+
 PY = sys.executable
 TOOLS = Path(__file__).parent
 
@@ -64,7 +74,13 @@ def main():
         date, cyc = latest_cycle(args.hours)
     print(f"GFS dongusu: {date} {cyc}Z, +{args.hours}h")
 
+    cfg = read_ini(args.case)
     if not args.skip_model:
+        # yuksek coz. yerel model: once gercek arazi indir (yoksa)
+        if cfg.get("terrain_source") == "tiles":
+            terr = Path(cfg["input_dir"]) / "terrain.bin"
+            if not terr.exists():
+                run([PY, TOOLS / "get_terrain.py", args.case])
         run([PY, TOOLS / "prep_gfs.py", args.case, "--date", date, "--cycle", cyc,
              "--hours", args.hours])
         # t_end'i istenen tahmin uzunluguna gore ayarla (ini'deki degeri gecersiz kil)
