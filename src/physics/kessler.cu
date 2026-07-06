@@ -14,6 +14,7 @@ __device__ __forceinline__ size_t g2(const GDims& g, int i, int j) {
   return (size_t)(j + g.ng) * g.NX + (i + g.ng);
 }
 
+using thermo::qsat_ice;
 using thermo::qsat_tetens;
 constexpr int KES_MAX_NZ = MAX_COLUMN_LEVELS;
 
@@ -31,6 +32,11 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
   real qrl[KES_MAX_NZ], rhol[KES_MAX_NZ], dzl[KES_MAX_NZ], vr[KES_MAX_NZ];
 
   // --- 1) sedimentasyon (birinci mertebe upwind, CFL alt-adimli) ---
+  // donma altinda dusen hidrometeor kar gibi ~3x yavas duser (basit-buz)
+  auto fallfac = [&](size_t c) {
+    real T = (p.thb[c] + thp[c]) * (p.pib[c] + pip[c]);
+    return T < phys::Tfrz ? (real)0.35 : (real)1;
+  };
   real rho_sfc = p.rhob[gidx(g, i, j, 0)];
   real vrmax = 0, dzmin = (real)1e30;
   for (int k = 0; k < g.nz; ++k) {
@@ -41,7 +47,8 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
     dzl[k] = m.dzeta_c[kk] * J;
     real rq = rhol[k] * qrl[k];
     vr[k] = rq > (real)1e-9
-                ? (real)36.34 * pow(rq, (real)0.1364) * sqrt(rho_sfc / rhol[k])
+                ? (real)36.34 * pow(rq, (real)0.1364) * sqrt(rho_sfc / rhol[k]) *
+                      fallfac(c)
                 : (real)0;
     if (vr[k] > vrmax) vrmax = vr[k];
     if (dzl[k] < dzmin) dzmin = dzl[k];
@@ -61,7 +68,8 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
       for (int k = 0; k < g.nz; ++k) {
         real rq = rhol[k] * (qrl[k] > (real)0 ? qrl[k] : (real)0);
         vr[k] = rq > (real)1e-9
-                    ? (real)36.34 * pow(rq, (real)0.1364) * sqrt(rho_sfc / rhol[k])
+                    ? (real)36.34 * pow(rq, (real)0.1364) * sqrt(rho_sfc / rhol[k]) *
+                          fallfac(gidx(g, i, j, k))
                     : (real)0;
       }
     }
@@ -78,7 +86,12 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
     real th = p.thb[c] + thp[c];
     real T = th * pi;
     real pres = phys::p00 * pow(pi, phys::cp / phys::Rd);
-    real qs = qsat_tetens(pres, T);
+    // karisik-faz: -40..0C arasi sivi fraksiyonu; qs ve L buna gore harmanlanir
+    real fl = (T - (real)233.15) / (real)40;
+    fl = fmax((real)0, fmin((real)1, fl));
+    real qsw = qsat_tetens(pres, T);
+    real qs = fl * qsw + ((real)1 - fl) * qsat_ice(pres, T);
+    real Leff = fl * phys::Lv + ((real)1 - fl) * phys::Ls;
 
     // otokonversiyon + akresyon (qc -> qr)
     real dqauto = k1 * (qck > qc0 ? qck - qc0 : (real)0);
@@ -100,14 +113,15 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
       if (dqe > qs - qvk) dqe = qs - qvk;
       qrk -= dqe;
       qvk += dqe;
-      thp[c] -= phys::Lv * dqe / (phys::cp * pi);
+      thp[c] -= Leff * dqe / (phys::cp * pi);   // sublimasyon/buharlasma sogumasi
       th = p.thb[c] + thp[c];
       T = th * pi;
-      qs = qsat_tetens(pres, T);
+      real fl2 = fmax((real)0, fmin((real)1, (T - (real)233.15) / (real)40));
+      qs = fl2 * qsat_tetens(pres, T) + ((real)1 - fl2) * qsat_ice(pres, T);
     }
 
-    // doygunluk ayarlamasi (tek Newton adimi; qv <-> qc, gizli isi)
-    real gam = phys::Lv * phys::Lv * qs / (phys::cp * phys::Rv * T * T);
+    // doygunluk ayarlamasi (tek Newton adimi; qv <-> qc/qi, karisik-faz gizli isi)
+    real gam = Leff * Leff * qs / (phys::cp * phys::Rv * T * T);
     real dq = (qvk - qs) / ((real)1 + gam);
     if (dq < (real)0) {
       real evap = -dq;
@@ -116,7 +130,7 @@ __global__ void k_kessler(GDims g, DevProf p, DevMetric m, real dt, real* thp,
     }
     qvk -= dq;
     qck += dq;
-    thp[c] += phys::Lv * dq / (phys::cp * pi);
+    thp[c] += Leff * dq / (phys::cp * pi);       // yogusma/depozisyon isitmasi
 
     qv[c] = qvk > (real)0 ? qvk : (real)0;
     qc[c] = qck > (real)0 ? qck : (real)0;
