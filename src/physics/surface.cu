@@ -25,11 +25,34 @@ constexpr real SIGMA = (real)5.67e-8;
 constexpr real S0 = (real)1361;
 constexpr real KM_MAX = (real)1000, KM_MIN = (real)0.1;
 
+// Businger-Dyer stabilite fonksiyonlari (2m/10m tanilari icin).
+// zeta = z/L; kararsizda x=(1-16 zeta)^(1/4).
+__device__ __forceinline__ real psi_m(real zeta) {
+  if (zeta >= (real)0) return (real)-5 * fmin(zeta, (real)2);   // kararli (kelepceli)
+  real x = pow((real)1 - (real)16 * zeta, (real)0.25);
+  const real halfpi = (real)1.5707963267948966;
+  return (real)2 * log(((real)1 + x) * (real)0.5) +
+         log(((real)1 + x * x) * (real)0.5) - (real)2 * atan(x) + halfpi;
+}
+__device__ __forceinline__ real psi_h(real zeta) {
+  if (zeta >= (real)0) return (real)-5 * fmin(zeta, (real)2);
+  real x = pow((real)1 - (real)16 * zeta, (real)0.25);
+  return (real)2 * log(((real)1 + x * x) * (real)0.5);
+}
+
 // Cok katmanli toprak (Noah-benzeri): 4 katman, hacimsel isi kap. + iletkenlik.
+// Termal ozellikler TOPRAK NEMI ile degisir (Johansen-tipi basitlestirme):
+// kuru bozkir (w~0.1): C~1.5e6, K~0.55 (termal atalet ~900) — sabit "nemli kil"
+// degerleri (C=2.2e6, K=1.5, atalet ~1800) yaz gunduz isinmasini yariya
+// bastiriyordu -> METAR'da -4C gunduz soguk sapmasinin ana bileseni.
 constexpr int NSOIL = 4;
 __constant__ real SOIL_DZ[NSOIL] = {(real)0.1, (real)0.3, (real)0.6, (real)1.0};  // [m]
-constexpr real SOIL_C = (real)2.2e6;  // hacimsel isi kapasitesi [J m-3 K-1] (nemli)
-constexpr real SOIL_K = (real)1.5;    // isil iletkenlik [W m-1 K-1]
+__device__ __forceinline__ real soil_C(real w) {   // [J m-3 K-1]
+  return (real)1.2e6 + (real)3.2e6 * fmin(fmax(w, (real)0), (real)0.4);
+}
+__device__ __forceinline__ real soil_K(real w) {   // [W m-1 K-1]
+  return (real)0.25 + (real)3.0 * fmin(fmax(w, (real)0), (real)0.4);
+}
 
 // Kolon-implicit dusey difuzyon (Thomas). phi merkez degerleri, Kw w-seviyeleri.
 // src0: k=0'a eklenen yuzey aki kaynagi [birim*kg m-2 s-1] (rho agirlikli).
@@ -98,8 +121,17 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   bool onland = land[c2] > (real)0.5;
   real z0 = onland ? (real)0.1 : (real)2e-4;
   real alb = onland ? (real)0.2 : (real)0.08;
-  // evaporasyon verimi: karada GFS toprak nemi / tarla kapasitesi (~0.35), denizde 1
-  real beta = onland ? fmin((real)1, fmax((real)0.15, soilw[c2] / (real)0.35)) : (real)1;
+  // evaporasyon verimi: karesel nem-stresi (solma 0.08, tarla kap. 0.32).
+  // Lineer oran kuru bozkirda (w~0.2 -> beta~0.57) asiri buharlatiyordu:
+  // 100-200 W/m2 gizli isiya kacip gunduz soguk sapmasi buyutuyordu.
+  real beta;
+  if (onland) {
+    real f = (soilw[c2] - (real)0.08) / ((real)0.32 - (real)0.08);
+    f = fmin((real)1, fmax((real)0, f));
+    beta = fmax((real)0.05, f * f);
+  } else {
+    beta = (real)1;
+  }
   real z1 = (real)0.5 * dzc[0];
   real V1 = sqrt(uc[0] * uc[0] + vc[0] * vc[0]);
   if (V1 < (real)0.5) V1 = (real)0.5;
@@ -128,11 +160,24 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   real Ch = a2 * Fh;
   cdv[c2] = Cd * V1;
 
-  // 2m sicaklik + 10m ruzgar tanilari (log profil, istasyon dogrulamasi icin)
+  // 2m sicaklik + 10m ruzgar tanilari: psi-duzeltmeli flux-profil
+  // (Businger-Dyer). Duz log-orani kararli gecelerde 2m'yi yuzeye fazla
+  // yapistiriyordu (gece soguk sapmasinin bir kaynagi). z/L, Rib'den
+  // Launiainen-tipi yaklasimla kestirilir; z/L yukseklikle lineer olceklenir.
   real z0h = z0 * (real)0.1;
-  real r10 = fmin((real)1, log((real)10 / z0) / log(z1 / z0));
+  real lnz1z0 = log(z1 / z0);
+  real zeta1 = (Rib >= (real)0)
+                   ? Rib * lnz1z0 / ((real)1 - (real)5 * fmin(Rib, (real)0.19))
+                   : Rib * lnz1z0;
+  zeta1 = fmax((real)-8, fmin((real)2, zeta1));
+  real zol = zeta1 / z1;                              // 1/L
+  real den_m = lnz1z0 - psi_m(zeta1) + psi_m(z0 * zol);
+  real num_m = log((real)10 / z0) - psi_m((real)10 * zol) + psi_m(z0 * zol);
+  real r10 = fmax((real)0, fmin((real)1.2, num_m / fmax(den_m, (real)0.1)));
   u10[c2] = V1 * r10;
-  real r2 = fmin((real)1, fmax((real)0, log((real)2 / z0h) / log(z1 / z0h)));
+  real den_h = log(z1 / z0h) - psi_h(zeta1) + psi_h(z0h * zol);
+  real num_h = log((real)2 / z0h) - psi_h((real)2 * zol) + psi_h(z0h * zol);
+  real r2 = fmax((real)0, fmin((real)1.2, num_h / fmax(den_h, (real)0.1)));
   real th2 = ths + (thcol[0] - ths) * r2;
   t2m[c2] = th2 * pi1;
 
@@ -170,9 +215,12 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
   for (int k = 0; k < g.nz; ++k)
     Fup[k + 1] = Fup[k] * ((real)1 - epslw[k]) +
                  epslw[k] * SIGMA * Tlev[k] * Tlev[k] * Tlev[k] * Tlev[k];
-  // kisa dalga: tek isin, su buhari + bulut soguurma
+  // kisa dalga: tek isin, su buhari + bulut soguurma.
+  // Bulut ALBEDOSU: kolon LWP'sine bagli yansitma (Stephens-tipi);
+  // onceden bulut yalniz sogururdu -> bulutlu gunde yuzey fazla isiniyordu.
   real mu = fmax(cosz, (real)0.05);
-  real Sdn = S0 * cosz * (real)0.95;                          // model tepesi (ozon/rayleigh sonrasi)
+  real cldalb = lwp / (lwp + (real)60);                       // ~60 g/m2 -> A=0.5
+  real Sdn = S0 * cosz * (real)0.95 * ((real)1 - cldalb);     // tepe (ozon/rayleigh + bulut yansimasi)
   real swabs[SFC_MAX_NZ];
   for (int k = g.nz - 1; k >= 0; --k) {
     size_t c = gidx(g, i, j, k);
@@ -200,21 +248,24 @@ __global__ void k_sfc_scalar(GDims g, DevProf p, DevMetric m, real dt, real utc,
            rho[0] * phys::Lv * qflx;                       // yuzeye net aki [W/m2]
   if (onland) {
     // 4 katman implicit 1B isi difuzyonu (Thomas). Ust: G akisi; alt: sabit Tdeep.
+    // C ve K toprak nemine bagli (kuru yaz topragi hizli isinir/sogur).
+    real Cso = soil_C(soilw[c2]);
+    real Kso = soil_K(soilw[c2]);
     real Tso[NSOIL], A[NSOIL], B[NSOIL], C[NSOIL], D[NSOIL];
     for (int L = 0; L < NSOIL; ++L) Tso[L] = soilt[(size_t)L * n2plane + c2];
     for (int L = 0; L < NSOIL; ++L) {
-      real cap = SOIL_C * SOIL_DZ[L] / dt;
+      real cap = Cso * SOIL_DZ[L] / dt;
       // katman arayuz iletim katsayilari (kat L ile L+1 arasi)
-      real ku = (L > 0) ? SOIL_K / ((real)0.5 * (SOIL_DZ[L - 1] + SOIL_DZ[L])) : (real)0;
-      real kl = (L < NSOIL - 1) ? SOIL_K / ((real)0.5 * (SOIL_DZ[L] + SOIL_DZ[L + 1]))
-                                : SOIL_K / SOIL_DZ[L];  // alt: Tdeep'e
+      real ku = (L > 0) ? Kso / ((real)0.5 * (SOIL_DZ[L - 1] + SOIL_DZ[L])) : (real)0;
+      real kl = (L < NSOIL - 1) ? Kso / ((real)0.5 * (SOIL_DZ[L] + SOIL_DZ[L + 1]))
+                                : Kso / SOIL_DZ[L];  // alt: Tdeep'e
       A[L] = -ku;
       C[L] = (L < NSOIL - 1) ? -kl : (real)0;
       B[L] = cap + ku + kl;
       D[L] = cap * Tso[L];
     }
     D[0] += G;                                    // ust sinir: yuzey isi akisi
-    D[NSOIL - 1] += (SOIL_K / SOIL_DZ[NSOIL - 1]) * tdeep[c2];  // alt: Tdeep
+    D[NSOIL - 1] += (Kso / SOIL_DZ[NSOIL - 1]) * tdeep[c2];  // alt: Tdeep
     for (int L = 1; L < NSOIL; ++L) {
       real w = A[L] / B[L - 1];
       B[L] -= w * C[L - 1];

@@ -6,9 +6,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 REGIONS = {
     "turkey": {
-        "case": "cases/turkey.ini",
-        "title": "Türkiye (12 km)",
-        "desc": "Tüm Türkiye ve çevresi, GFS-güdümlü bölgesel model.",
+        "case": "cases/turkey6km.ini",
+        "title": "Türkiye (6 km)",
+        "desc": "Tüm Türkiye ve çevresi, 6 km — gerçek yüksek çözünürlüklü arazi "
+                "(orografik detay), GFS-güdümlü bölgesel model.",
         "default_hours": 24,
     },
     "antalya": {

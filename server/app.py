@@ -14,15 +14,26 @@ import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import overlay
 import products
+import terrain
 from regions import ROOT, REGIONS, read_ini
 
 app = FastAPI(title="WFE Forecast API",
               description="GPU-yerlisi bölgesel hava tahmin modeli — ürün servisi",
               version="1.0.0")
+
+# Ayrı dev sunucudan (ör. Vite :5173) erişim için CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _jobs = {}  # basit iş durumu takibi (id -> durum)
 
@@ -38,11 +49,25 @@ def regions():
             for k, v in REGIONS.items()]
 
 
-@app.get("/products/{region}")
-def region_manifest(region: str):
+def _check_run(run):
+    if run is not None and not (len(run) == 10 and run.isdigit()):
+        raise HTTPException(400, "geçersiz koşu (YYYYMMDDHH bekleniyor)")
+    return run
+
+
+@app.get("/runs/{region}")
+def region_runs(region: str):
+    """Gezinebilir koşular: güncel + arşiv (geçmiş tahminler)."""
     if region not in REGIONS:
         raise HTTPException(404, "bilinmeyen bölge")
-    return products.manifest(region)
+    return products.runs_list(region)
+
+
+@app.get("/products/{region}")
+def region_manifest(region: str, run: str | None = None):
+    if region not in REGIONS:
+        raise HTTPException(404, "bilinmeyen bölge")
+    return products.manifest(region, _check_run(run))
 
 
 @app.get("/products/{region}/map/{name}")
@@ -56,13 +81,99 @@ def region_map(region: str, name: str):
     return FileResponse(p, media_type="image/png")
 
 
+@app.get("/overlay/{region}/{field}/{step}.png")
+def overlay_png(region: str, field: str, step: int):
+    """Tek alan, şeffaf arka planlı, renk-eşlemeli overlay PNG (harita bindirmesi)."""
+    if region not in REGIONS:
+        raise HTTPException(404, "bilinmeyen bölge")
+    if field not in overlay.FIELDS:
+        raise HTTPException(404, "bilinmeyen alan")
+    png = overlay.render_png(region, field, step)
+    if png is None:
+        raise HTTPException(404, "bu adım/alan için veri yok")
+    return Response(png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/data/{region}/{field}/{step}.png")
+def data_png(region: str, field: str, step: int, run: str | None = None):
+    """Ham alan verisi — 16-bit R/G paketli RGB PNG (istemci-tarafı render).
+
+    run=YYYYMMDDHH → arşivlenmiş (geçmiş) koşudan."""
+    if region not in REGIONS:
+        raise HTTPException(404, "bilinmeyen bölge")
+    if field not in overlay.FIELDS:
+        raise HTTPException(404, "bilinmeyen alan")
+    run = _check_run(run)
+    png = overlay.render_data_png(region, field, step, run)
+    if png is None:
+        raise HTTPException(404, "bu adım/alan için veri yok")
+    # ETag=mtime + no-cache: aynı döngü yeniden koşulursa (dosya değişir)
+    # tarayıcı 304 yeniden-doğrulamasıyla bayat kareyi atar
+    mt = overlay._src_mtime(region, field, step, run)
+    return Response(png, media_type="image/png",
+                    headers={"Cache-Control": "no-cache",
+                             "ETag": f'"{mt}"' if mt else '"0"'})
+
+
+@app.get("/uv/{region}/{step}.png")
+def uv_png(region: str, step: int):
+    """Yüzeye-yakın rüzgâr bileşenleri (u,v) — 8-bit RGB PNG (partiküller)."""
+    if region not in REGIONS:
+        raise HTTPException(404, "bilinmeyen bölge")
+    png = overlay.render_uv_png(region, step)
+    if png is None:
+        raise HTTPException(404, "bu adım için rüzgâr verisi yok")
+    return Response(png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/terrain/{region}/{kind}.png")
+def terrain_png(region: str, kind: str):
+    """Yükseklik alanları (model / hires) — istemci-tarafı lapse-rate detaylandırma."""
+    if region not in REGIONS:
+        raise HTTPException(404, "bilinmeyen bölge")
+    png = terrain.terrain_png(region, kind)
+    if png is None:
+        raise HTTPException(404, "arazi verisi yok")
+    return Response(png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.get("/field/{region}/{field}/{step}.json")
+def field_values(region: str, field: str, step: int):
+    """Ham ızgara değerleri (istemci-tarafı renklendirme/kontur için)."""
+    if region not in REGIONS:
+        raise HTTPException(404, "bilinmeyen bölge")
+    if field not in overlay.FIELDS:
+        raise HTTPException(404, "bilinmeyen alan")
+    j = overlay.field_json(region, field, step)
+    if j is None:
+        raise HTTPException(404, "bu adım/alan için veri yok")
+    return j
+
+
+@app.get("/colormap")
+def colormaps():
+    """Tüm alanların renk skalası meta verisi (efsane çizimi için)."""
+    return overlay.colormap_meta()
+
+
+@app.get("/colormap/{field}")
+def colormap_one(field: str):
+    m = overlay.colormap_meta(field)
+    if m is None:
+        raise HTTPException(404, "bilinmeyen alan")
+    return m
+
+
 @app.get("/point/{region}")
 def point(region: str, lat: float = Query(..., ge=-90, le=90),
-          lon: float = Query(..., ge=-180, le=180)):
+          lon: float = Query(..., ge=-180, le=180), run: str | None = None):
     if region not in REGIONS:
         raise HTTPException(404, "bilinmeyen bölge")
     try:
-        return products.point_forecast(region, lat, lon)
+        return products.point_forecast(region, lat, lon, _check_run(run))
     except FileNotFoundError:
         raise HTTPException(404, "bu bölge için henüz koşu yok")
 

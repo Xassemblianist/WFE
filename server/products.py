@@ -26,38 +26,98 @@ def _steps(outdir):
                   for p in glob.glob(str(outdir / "thp_*.bin")))
 
 
-def manifest(region):
-    """Bir bölgenin en güncel koşusunun ürün manifesti (JSON-uyumlu dict)."""
+def _surface_steps(outdir):
+    """Yüzey tanı alanlarının (t2m/u10/rain) yazıldığı adımlar.
+
+    Bu alanlar başlangıç anında (adım 0) henüz tanılanmadığından yazılmaz;
+    haritada gösterilen tüm katmanlar bu adımlarda mevcut olduğundan manifest
+    zaman ekseni buna göre kurulur (aksi halde adım 0 overlay'i 404 döner)."""
+    s = sorted(int(Path(p).stem.split("_")[1])
+               for p in glob.glob(str(outdir / "t2m_*.bin")))
+    return s or _steps(outdir)
+
+
+def _case_name(region):
+    """Arşiv anahtarı = case dosya adı (run_operational bölgeleri case adıyla
+    arşivler; API bölge id'si farklı olabilir: turkey → turkey6km)."""
+    return Path(REGIONS[region]["case"]).stem
+
+
+def _archive_dir(region, run):
+    return ROOT / "out" / "archive" / _case_name(region) / run
+
+
+def runs_list(region):
+    """Gezinebilir koşular: güncel + arşivdekiler (yeni→eski)."""
     r = REGIONS[region]
     cfg = read_ini(ROOT / r["case"])
-    outdir = ROOT / cfg["out_dir"]
+    prep = ROOT / cfg["input_dir"]
+    cur = None
+    if (prep / "wfe_input.ini").exists():
+        cur = read_ini(prep / "wfe_input.ini").get("start")
+    out = []
+    if cur:
+        out.append({"cycle": cur, "current": True})
+    arch = ROOT / "out" / "archive" / _case_name(region)
+    if arch.is_dir():
+        for d in sorted(arch.iterdir(), reverse=True):
+            if (d.name != cur and len(d.name) == 10 and d.name.isdigit()
+                    and (d / "meta.json").exists()
+                    and glob.glob(str(d / "t2m_*.bin"))):
+                out.append({"cycle": d.name, "current": False})
+    for e in out:
+        e["init"] = dtm.datetime.strptime(e["cycle"], "%Y%m%d%H").replace(
+            tzinfo=dtm.timezone.utc).isoformat()
+    return out
+
+
+def manifest(region, run=None):
+    """Bir koşunun ürün manifesti. run=None → güncel; 'YYYYMMDDHH' → arşiv."""
+    r = REGIONS[region]
+    cfg = read_ini(ROOT / r["case"])
+    outdir = _archive_dir(region, run) if run else ROOT / cfg["out_dir"]
     meta_p = outdir / "meta.json"
     if not meta_p.exists():
         return {"region": region, "available": False}
     meta = json.loads(meta_p.read_text())
     prep = ROOT / cfg["input_dir"]
-    start = read_ini(prep / "wfe_input.ini").get("start", "?") if \
-        (prep / "wfe_input.ini").exists() else "?"
+    if run:
+        start = run
+    else:
+        start = read_ini(prep / "wfe_input.ini").get("start", "?") if \
+            (prep / "wfe_input.ini").exists() else "?"
     init = None
-    if start != "?":
+    if start and start != "?":
         init = dtm.datetime.strptime(start, "%Y%m%d%H").replace(
             tzinfo=dtm.timezone.utc).isoformat()
-    steps = _steps(outdir)
+    steps = _surface_steps(outdir)
     dt = meta["dt"]
     maps = sorted(Path(p).name for p in glob.glob(str(outdir / "map_*.png")))
-    return {
+    out = {
         "region": region, "title": r["title"], "available": bool(steps),
         "init": init, "dx_m": meta["dx"], "nx": meta["nx"], "ny": meta["ny"],
         "steps": [{"step": s, "fhour": round(s * dt / 3600, 1)} for s in steps],
-        "maps": maps,
+        "maps": maps, "run": run,
     }
+    # Harita overlay'i için georeferans + servis edilen alanlar
+    try:
+        import overlay
+        out.update(overlay.domain_corners(region))
+        # arşiv koşularında yalnız yüzey alanları mevcut
+        out["fields"] = ["t2m", "wind", "precip"] if run else overlay.FIELDS
+    except Exception:  # noqa — overlay meta zorunlu değil
+        pass
+    return out
 
 
-def point_forecast(region, lat, lon):
-    """En yakın grid hücresinde 2m sıcaklık / 10m rüzgâr / yağış zaman serisi."""
+def point_forecast(region, lat, lon, run=None):
+    """En yakın grid hücresinde 2m sıcaklık / 10m rüzgâr / yağış zaman serisi.
+
+    run: arşivlenmiş koşu ('YYYYMMDDHH'); georeferans güncel prep'ten
+    (alan sabit), veriler arşiv dizininden okunur."""
     r = REGIONS[region]
     cfg = read_ini(ROOT / r["case"])
-    outdir = ROOT / cfg["out_dir"]
+    outdir = _archive_dir(region, run) if run else ROOT / cfg["out_dir"]
     prep = ROOT / cfg["input_dir"]
     meta = json.loads((outdir / "meta.json").read_text())
     nx, ny, dt = meta["nx"], meta["ny"], meta["dt"]
@@ -68,7 +128,7 @@ def point_forecast(region, lat, lon):
     jj, ii = divmod(idx, nx)
     if d2.flat[idx] > 1.0:
         return {"error": "nokta alan dışında"}
-    start = read_ini(prep / "wfe_input.ini")["start"]
+    start = run if run else read_ini(prep / "wfe_input.ini")["start"]
     init = dtm.datetime.strptime(start, "%Y%m%d%H").replace(tzinfo=dtm.timezone.utc)
 
     def rd2(var, s):
@@ -78,7 +138,7 @@ def point_forecast(region, lat, lon):
         return float(np.fromfile(p, dtype=np.float32).reshape(ny, nx)[jj, ii])
 
     series, prev_rain = [], None
-    for s in _steps(outdir):
+    for s in _surface_steps(outdir):
         t2 = rd2("t2m", s)
         u10 = rd2("u10", s)
         rain = rd2("rain", s)
